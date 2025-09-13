@@ -2,6 +2,7 @@ import * as THREE from 'three';
 // import { Water } from 'three/addons/objects/Water.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { fishRef } from './load_model.js';
+import { fishingAPI } from './api.js';
 // BVH accelerated raycasting
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 // wire accelerated raycast into three
@@ -199,6 +200,9 @@ window.addEventListener('keyup',   (e) => { setKey(e.code, false); });
 window.addEventListener('keydown', (e) => { if (e.code === 'KeyP') debugEnabled = !debugEnabled; });
 
 function setKey(code, val) {
+  // Disable all game controls when modal is open
+  if (isModalOpen) return;
+  
   if (code === 'KeyW') keys.w = val;
   if (code === 'KeyA') keys.a = val;
   if (code === 'KeyS') keys.s = val;
@@ -351,5 +355,232 @@ setInterval(() => {
     console.log('(main.js) Fish not loaded yet.');
   }
 }, 2000);
+
+// --- Fishing Modal Logic
+const fishingChoiceModal = document.getElementById('fishing-choice-modal');
+const fishModal = document.getElementById('fish-modal');
+const myBottlesModal = document.getElementById('my-bottles-modal');
+const bottlesList = document.getElementById('bottles-list');
+const bottlesCloseBtn = document.getElementById('bottles-close-btn');
+const fishQuestion = document.getElementById('fish-question');
+const bottleContent = document.getElementById('bottle-content');
+const bottleQuestion = document.getElementById('bottle-question');
+const bottleAuthor = document.getElementById('bottle-author');
+const bottleMessage = document.getElementById('bottle-message');
+const reflectionInput = document.getElementById('reflection-input');
+const cancelBtn = document.getElementById('cancel-btn');
+const submitBtn = document.getElementById('submit-btn');
+const choiceCancelBtn = document.getElementById('choice-cancel-btn');
+const fishForFishBtn = document.getElementById('fish-for-fish');
+const fishForBottlesBtn = document.getElementById('fish-for-bottles');
+const fishForAnythingBtn = document.getElementById('fish-for-anything');
+
+let currentFish = null;
+let currentBottle = null;
+let isModalOpen = false;
+const currentUsername = 'player'; // TODO: Get from auth system
+
+// Modal controls
+function showChoiceModal() {
+  isModalOpen = true;
+  fishingChoiceModal.style.display = 'flex';
+}
+
+function hideChoiceModal() {
+  fishingChoiceModal.style.display = 'none';
+  isModalOpen = false;
+}
+
+function showFishModal(fish) {
+  currentFish = fish;
+  currentBottle = null;
+  fishQuestion.textContent = fish.question;
+  fishQuestion.style.display = 'block';
+  bottleContent.style.display = 'none';
+  reflectionInput.placeholder = 'Write your reflection...';
+  reflectionInput.value = '';
+  fishModal.style.display = 'flex';
+  reflectionInput.focus();
+}
+
+function showBottleModal(bottle) {
+  currentBottle = bottle;
+  currentFish = null;
+  bottleQuestion.textContent = bottle.question;
+  bottleAuthor.textContent = bottle.username;
+  bottleMessage.textContent = bottle.message;
+  fishQuestion.style.display = 'none';
+  bottleContent.style.display = 'block';
+  reflectionInput.placeholder = 'Write your response...';
+  reflectionInput.value = '';
+  fishModal.style.display = 'flex';
+  reflectionInput.focus();
+}
+
+function hideFishModal() {
+  fishModal.style.display = 'none';
+  isModalOpen = false;
+  currentFish = null;
+  currentBottle = null;
+}
+
+function showMyBottlesModal(bottles) {
+  isModalOpen = true;
+  bottlesList.innerHTML = '';
+  
+  if (!bottles || bottles.length === 0) {
+    bottlesList.innerHTML = '<div style="text-align: center; color: #a0a0a0;">No bottles yet. Go fishing to create some!</div>';
+  } else {
+    bottles.forEach(bottle => {
+      const bottleDiv = document.createElement('div');
+      bottleDiv.className = 'bottle-item';
+      
+      let responsesHtml = '';
+      if (bottle.responses && bottle.responses.length > 0) {
+        responsesHtml = `
+          <div class="bottle-responses">
+            <strong>Responses (${bottle.responses.length}):</strong>
+            ${bottle.responses.map(resp => `
+              <div class="response-item">
+                <span class="response-author">${resp.username}:</span> ${resp.response}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } else {
+        responsesHtml = '<div class="bottle-responses"><em>No responses yet</em></div>';
+      }
+      
+      bottleDiv.innerHTML = `
+        <div class="bottle-question">${bottle.question}</div>
+        <div class="bottle-message">${bottle.message}</div>
+        ${responsesHtml}
+      `;
+      
+      bottlesList.appendChild(bottleDiv);
+    });
+  }
+  
+  myBottlesModal.style.display = 'flex';
+}
+
+function hideMyBottlesModal() {
+  myBottlesModal.style.display = 'none';
+  isModalOpen = false;
+}
+
+// Event listeners
+cancelBtn.addEventListener('click', hideFishModal);
+choiceCancelBtn.addEventListener('click', hideChoiceModal);
+bottlesCloseBtn.addEventListener('click', hideMyBottlesModal);
+
+submitBtn.addEventListener('click', async () => {
+  const reflection = reflectionInput.value.trim();
+  if (!reflection) return;
+  
+  try {
+    submitBtn.textContent = 'Casting...';
+    submitBtn.disabled = true;
+    
+    if (currentFish) {
+      await fishingAPI.createBottle(currentFish.id, currentUsername, reflection);
+    } else if (currentBottle) {
+      await fishingAPI.respondToBottle(currentUsername, currentBottle.question_id, reflection);
+    }
+    
+    hideFishModal();
+    console.log('Success!');
+  } catch (error) {
+    console.error('Failed:', error);
+  } finally {
+    submitBtn.textContent = 'Cast into Ocean';
+    submitBtn.disabled = false;
+  }
+});
+
+// Choice button listeners
+fishForFishBtn.addEventListener('click', async () => {
+  hideChoiceModal();
+  try {
+    const fish = await fishingAPI.catchFish(currentUsername);
+    showFishModal(fish);
+  } catch (error) {
+    console.error('Failed to catch fish:', error);
+    isModalOpen = false;
+  }
+});
+
+fishForBottlesBtn.addEventListener('click', async () => {
+  console.log('Fish for bottles clicked');
+  hideChoiceModal();
+  try {
+    console.log('Calling catchBottle API...');
+    const bottle = await fishingAPI.catchBottle(currentUsername);
+    console.log('Received bottle:', bottle);
+    showBottleModal(bottle);
+  } catch (error) {
+    console.error('Failed to catch bottle:', error);
+    alert('Failed to catch bottle: ' + error.message);
+    isModalOpen = false;
+  }
+});
+
+fishForAnythingBtn.addEventListener('click', async () => {
+  hideChoiceModal();
+  try {
+    const random = Math.random() < 0.5;
+    if (random) {
+      const fish = await fishingAPI.catchFish(currentUsername);
+      showFishModal(fish);
+    } else {
+      const bottle = await fishingAPI.catchBottle(currentUsername);
+      showBottleModal(bottle);
+    }
+  } catch (error) {
+    console.error('Failed to catch anything:', error);
+    isModalOpen = false;
+  }
+});
+
+// Fishing interaction
+async function triggerFishing() {
+  showChoiceModal();
+}
+
+async function showMyBottles() {
+  try {
+    const bottles = await fishingAPI.getUserBottles(currentUsername);
+    showMyBottlesModal(bottles);
+  } catch (error) {
+    console.error('Failed to get bottles:', error);
+  }
+}
+
+// Add F key for fishing
+keys.f = false;
+keys.b = false;
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyF' && !isModalOpen) {
+    keys.f = true;
+    e.preventDefault();
+  }
+  if (e.code === 'KeyB' && !isModalOpen) {
+    keys.b = true;
+    e.preventDefault();
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'KeyF' && !isModalOpen) {
+    keys.f = false;
+    triggerFishing();
+    e.preventDefault();
+  }
+  if (e.code === 'KeyB' && !isModalOpen) {
+    keys.b = false;
+    showMyBottles();
+    e.preventDefault();
+  }
+});
 
 export { scene };
