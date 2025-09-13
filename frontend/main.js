@@ -40,10 +40,21 @@ function setupCamera() {
   const aspect = window.innerWidth / window.innerHeight;
   const halfW = (frustumSize * aspect) / 2;
   const halfH = frustumSize / 2;
+
+  const NEAR = 0.01;   // lower clip distance (see closer)
+  const FAR  = 500;    // clip sooner in the distance (optional)
+
   if (!camera) {
-    camera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 0.1, 2000);
+    camera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, NEAR, FAR);
+    camera.position.set(0, 1.2, 3.6);
+    camera.lookAt(0, 0, 0);
   } else {
-    camera.left = -halfW; camera.right = halfW; camera.top = halfH; camera.bottom = -halfH;
+    camera.left = -halfW;
+    camera.right = halfW;
+    camera.top = halfH;
+    camera.bottom = -halfH;
+    camera.near = NEAR;   // <-- update near
+    camera.far = FAR;     // <-- update far
     camera.updateProjectionMatrix();
   }
 }
@@ -95,6 +106,7 @@ const WATER_LEVEL = -1.0; // y below which is considered water/void and not walk
 const STAND_OFFSET = 0.12; // how high above the hit point the player stands
 const SNAP_DAMP = 12; // damping for vertical snap (larger = snappier)
 const ROT_DAMP = 8; // damping for rotation alignment to surface normal
+const FLOOR_Y = -13.9625; // hard floor clamp for the player
 
 // Walkable meshes populated at load time
 const walkableMeshes = [];
@@ -416,9 +428,15 @@ function animate() {
 
       // Accept movement when there's a surface hit (including beach/water areas).
       const targetY = hit.point.y + STAND_OFFSET;
-      player.position.x = next.x;
-      player.position.z = next.z;
-      player.position.y = THREE.MathUtils.damp(currentY, targetY, SNAP_DAMP, dt);
+      // if the targetY would be below the floor, cancel this move
+      if (targetY < FLOOR_Y) {
+        // keep player in place, subtle blocked bob
+        body.position.y = THREE.MathUtils.damp(body.position.y, 1.4, 6, dt);
+      } else {
+        player.position.x = next.x;
+        player.position.z = next.z;
+        player.position.y = THREE.MathUtils.damp(currentY, targetY, SNAP_DAMP, dt);
+      }
 
       // align to surface normal while preserving yaw
       const up = new THREE.Vector3(0,1,0);
@@ -431,12 +449,18 @@ function animate() {
     } else {
       // No hit: allow movement toward beach — damp Y toward a beach fallback level so player can reach shore
       const beachY = WATER_LEVEL + STAND_OFFSET;
-      player.position.x = next.x;
-      player.position.z = next.z;
-      player.position.y = THREE.MathUtils.damp(currentY, beachY, Math.max(1, SNAP_DAMP / 3), dt);
-      // keep facing movement direction
-      const targetYaw = Math.atan2(delta.x, delta.z);
-      player.rotation.y = THREE.MathUtils.damp(player.rotation.y, targetYaw, 8, dt);
+      // if beachY would be below the floor, cancel move
+      if (beachY < FLOOR_Y) {
+        body.position.y = THREE.MathUtils.damp(body.position.y, 1.4, 6, dt);
+      } else {
+        player.position.x = next.x;
+        player.position.z = next.z;
+        player.position.y = THREE.MathUtils.damp(currentY, beachY, Math.max(1, SNAP_DAMP / 3), dt);
+        // keep facing movement direction
+        const targetYaw = Math.atan2(delta.x, delta.z);
+        player.rotation.y = THREE.MathUtils.damp(player.rotation.y, targetYaw, 8, dt);
+        body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
+      }
     }
   }
 
@@ -464,6 +488,8 @@ function animate() {
 
   // camera follow at isometric offset
   const camTarget = player.position;
+  // hard floor clamp: never allow player to drop below FLOOR_Y
+  if (player.position.y < FLOOR_Y) player.position.y = FLOOR_Y;
   camera.position.copy(camTarget).add(isoOffset);
   camera.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
 
