@@ -6,6 +6,11 @@ import { fishRef } from './load_model.js';
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 // wire accelerated raycast into three
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
+// expose the compute/dispose helpers on BufferGeometry so we can call geometry.computeBoundsTree()
+if (THREE.BufferGeometry && !THREE.BufferGeometry.prototype.computeBoundsTree) {
+  THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+  THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+}
 
 // --- Simple error surface
 const errBox = document.getElementById('err');
@@ -101,6 +106,16 @@ let debugEnabled = false;
 let debugRayLine = null;
 let debugNormalArrow = null;
 
+// create debug visuals
+const dbgLineMat = new THREE.LineBasicMaterial({ color: 0xff0000 });
+const dbgLineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+debugRayLine = new THREE.Line(dbgLineGeo, dbgLineMat);
+debugRayLine.visible = false;
+scene.add(debugRayLine);
+debugNormalArrow = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(), 2, 0x00ff00);
+debugNormalArrow.visible = false;
+scene.add(debugNormalArrow);
+
 // --- Player
 const player = new THREE.Group();
 const body = new THREE.Mesh(
@@ -148,6 +163,22 @@ loader.load(
     root.position.z = -15;
     root.position.x = -5;
 
+    // Build BVH on loaded geometries and collect walkable meshes
+    root.traverse((o) => {
+      if (o.isMesh && o.geometry && o.geometry.isBufferGeometry) {
+        try {
+          if (typeof o.geometry.computeBoundsTree === 'function') {
+            o.geometry.computeBoundsTree();
+          } else {
+            computeBoundsTree(o.geometry);
+          }
+          walkableMeshes.push(o);
+        } catch (err) {
+          console.warn('Failed to build BVH for mesh', o, err);
+        }
+      }
+    });
+
     scene.add(root);
 
     // Play any animations
@@ -164,6 +195,8 @@ loader.load(
 const keys = { w:false, a:false, s:false, d:false, up:false, left:false, down:false, right:false, shift:false };
 window.addEventListener('keydown', (e) => { setKey(e.code, true); });
 window.addEventListener('keyup',   (e) => { setKey(e.code, false); });
+// toggle debug visuals
+window.addEventListener('keydown', (e) => { if (e.code === 'KeyP') debugEnabled = !debugEnabled; });
 
 function setKey(code, val) {
   if (code === 'KeyW') keys.w = val;
@@ -227,14 +260,53 @@ function animate() {
       next.x = Math.cos(ang) * maxLen;
       next.z = Math.sin(ang) * maxLen;
     }
-    player.position.copy(next);
 
-    // face movement direction smoothly
-    const targetYaw = Math.atan2(delta.x, delta.z);
-    player.rotation.y = THREE.MathUtils.damp(player.rotation.y, targetYaw, 8, dt);
+    // BVH-accelerated downward raycast from above candidate XZ to find surface
+    raycaster.set(new THREE.Vector3(next.x, next.y + RAY_HEIGHT, next.z), downDir);
+    raycaster.far = RAY_HEIGHT * 2;
+    const hits = raycaster.intersectObjects(walkableMeshes, true);
+    if (debugEnabled) {
+      const start = raycaster.ray.origin.clone();
+      const end = start.clone().add(raycaster.ray.direction.clone().multiplyScalar(raycaster.far));
+      debugRayLine.geometry.setFromPoints([start, end]);
+      debugRayLine.visible = true;
+    } else {
+      debugRayLine.visible = false;
+      debugNormalArrow.visible = false;
+    }
+    if (hits.length > 0) {
+      const hit = hits[0];
+      if (debugEnabled) {
+        debugNormalArrow.position.copy(hit.point);
+        const normalVec = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : new THREE.Vector3(0,1,0);
+        debugNormalArrow.setDirection(normalVec);
+        debugNormalArrow.visible = true;
+      }
+      // ignore hits under water/void
+      if (hit.point.y > WATER_LEVEL) {
+        // accept X/Z, smoothly snap Y
+        const targetY = hit.point.y + STAND_OFFSET;
+        player.position.x = next.x;
+        player.position.z = next.z;
+        player.position.y = THREE.MathUtils.damp(player.position.y, targetY, SNAP_DAMP, dt);
 
-    // subtle bob
-    body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
+        // align to surface normal while preserving yaw
+        const up = new THREE.Vector3(0,1,0);
+        const normal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : up;
+        const surfaceQuat = new THREE.Quaternion().setFromUnitVectors(up, normal);
+        const targetYaw = Math.atan2(delta.x, delta.z);
+        const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), targetYaw);
+        const desiredQuat = surfaceQuat.clone().multiply(yawQuat);
+        player.quaternion.slerp(desiredQuat, 1 - Math.exp(-ROT_DAMP * dt));
+
+        // subtle bob
+        body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
+      } else {
+        // hit but under water level: block move
+      }
+    } else {
+      // no hit: block move (avoid falling through); could implement fall physics here
+    }
   } else {
     body.position.y = THREE.MathUtils.damp(body.position.y, 1.6, 6, dt);
   }
