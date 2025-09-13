@@ -9,7 +9,7 @@ const fish_for_fish = async (username, questionType = null) => {
     
     // Filter by question type if provided
     if (questionType) {
-        query = query.eq('type', questionType);
+        query = query.eq('question_type', questionType);
     }
 
     const { data, error } = await query;

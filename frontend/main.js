@@ -84,6 +84,30 @@ function setupCameras() {
   if (!activeCamera) activeCamera = perspCam;
 }
 
+// Keep using the same orthoCam/isoOffset you already have.
+const BASE_FRUSTUM = frustumSize; // 50 (your current)
+const ZOOM_FRUSTUM = 16;          // how "tight" you want the zoom
+
+const BASE_ISO_DIST = 30;         // isoOffset's default length (you set it to 30)
+const ZOOM_ISO_DIST = 12;         // how close the cam gets during zoom
+
+const zoomCtl = {
+  targetHeight: BASE_FRUSTUM,
+  targetIsoDist: BASE_ISO_DIST,
+  speed: 4.5 // damping strength (higher = snappier)
+};
+
+function enterFishingZoom() {
+  zoomCtl.targetHeight = ZOOM_FRUSTUM;
+  zoomCtl.targetIsoDist = ZOOM_ISO_DIST;
+}
+
+function exitFishingZoom() {
+  zoomCtl.targetHeight = BASE_FRUSTUM;
+  zoomCtl.targetIsoDist = BASE_ISO_DIST;
+}
+
+
 setupCameras();
 
 // -------- Intro tween state --------
@@ -438,10 +462,6 @@ let currentSpeedMps = 0; // measured world speed (XZ), meters/sec
 prevPlayerPos.copy(player.position);
 
 function animate() {
-  // ensure camera is ready
-  if (typeof activeCamera === 'undefined' || !activeCamera) {
-    setupCameras();
-  }
   const dt = Math.min(clock.getDelta(), 0.05);
 
   if (envMixer) envMixer.update(dt);
@@ -597,14 +617,63 @@ function animate() {
 
   // camera follow at isometric offset (final target for ortho)
   const camTarget = player.position;
-  // hard floor clamp: never allow player to drop below FLOOR_Y
-  if (player.position.y < FLOOR_Y) player.position.y = FLOOR_Y;
-  // position and orient the active camera
-  if (activeCamera) {
-    activeCamera.position.copy(camTarget).add(isoOffset);
-    activeCamera.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
-    renderer.render(scene, activeCamera);
+
+  // ---- INTRO TWEEN (perspective) ----
+  if (intro.active) {
+    intro.t += dt * 1000;
+    const u = THREE.MathUtils.clamp(intro.t / intro.dur, 0, 1);
+    const e = easeInOutCubic(u);
+
+    const look = new THREE.Vector3(camTarget.x, camTarget.y + 1.4, camTarget.z);
+    const desiredEndPos = new THREE.Vector3().copy(camTarget).add(isoOffset);
+
+    // Tween pos + yaw + FOV
+    const curPos = new THREE.Vector3().lerpVectors(intro.startPos, desiredEndPos, e);
+    const dir = new THREE.Vector3().subVectors(camTarget, desiredEndPos).setY(0);
+    const endYaw = Math.atan2(dir.x, dir.z);
+    const curYaw = lerpAngle(intro.startYawRad, endYaw, e);
+    const curFov = THREE.MathUtils.lerp(intro.startFov, intro.endFov, e);
+
+    perspCam.position.copy(curPos);
+    perspCam.lookAt(look);
+    perspCam.fov = curFov;
+    perspCam.updateProjectionMatrix();
+
+    // Start aligning the ortho camera to the perspective view for a seamless swap
+    const handoffStart = 0.85;   // begin matching frustum for last ~15%
+    if (u >= handoffStart) {
+      // Continuously match ortho to what perspective shows *this frame*
+      const matchedHeight = matchOrthoToPerspective(perspCam, orthoCam, look);
+      orthoVisibleHeight = matchedHeight; // remember this so we can ease from it later
+    }
+
+    if (u >= 0.999) {
+      // Switch with no visible jump (views are already identical)
+      activeCamera = orthoCam;
+      intro.active = false;
+      fishingGame.setCamera?.(activeCamera);
+    }
+  } else {
+    // ---- NORMAL ORTHO FOLLOW ----
+    // Smoothly ease ortho zoom back to your standard frustumSize
+    // ---- NORMAL ORTHO FOLLOW (zoom-aware) ----
+    // 1) zoom the orthographic frustum
+    orthoVisibleHeight = THREE.MathUtils.damp(
+      orthoVisibleHeight, zoomCtl.targetHeight, zoomCtl.speed, dt
+    );
+    setOrthoFrustumByHeight(orthoCam, orthoVisibleHeight);
+
+    // 2) move camera toward/away from the player along the same isometric direction
+    const curDist = isoOffset.length();
+    const newDist = THREE.MathUtils.damp(curDist, zoomCtl.targetIsoDist, zoomCtl.speed, dt);
+    isoOffset.setLength(newDist);
+
+    // 3) position + look
+    orthoCam.position.copy(camTarget).add(isoOffset);
+    orthoCam.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
+
   }
+  renderer.render(scene, activeCamera);
   requestAnimationFrame(animate);
 }
 animate();
@@ -702,6 +771,7 @@ function hideFishModal() {
   isModalOpen = false;
   currentFish = null;
   currentBottle = null;
+  exitFishingZoom();
 }
 
 function showMyBottlesModal(bottles) {
@@ -864,6 +934,7 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => {
   if (e.code === 'KeyF' && !isModalOpen && !fishingGame.writingInterface.isActive) {
     keys.f = false;
+    enterFishingZoom();
     triggerFishing();
     e.preventDefault();
   }
@@ -875,76 +946,4 @@ window.addEventListener('keyup', (e) => {
 });
 
 export { scene };
-
-// --- Live hand-offset debug UI (sliders)
-// creates a small panel you can toggle with Ctrl+H
-(function createHandOffsetUI(){
-  const panel = document.createElement('div');
-  panel.id = 'hand-offset-panel';
-  panel.style.position = 'fixed';
-  panel.style.right = '12px';
-  panel.style.top = '12px';
-  panel.style.background = 'rgba(0,0,0,0.55)';
-  panel.style.color = '#fff';
-  panel.style.padding = '8px';
-  panel.style.fontFamily = 'sans-serif';
-  panel.style.fontSize = '12px';
-  panel.style.borderRadius = '6px';
-  panel.style.zIndex = 9999;
-  panel.style.maxWidth = '260px';
-  panel.style.display = 'none';
-
-  const title = document.createElement('div'); title.textContent = 'Hand Offset (Ctrl+H)'; title.style.fontWeight='700'; title.style.marginBottom='6px';
-  panel.appendChild(title);
-
-  function addSlider(labelText, min, max, step, getVal, setVal) {
-    const row = document.createElement('div'); row.style.marginBottom='6px';
-    const label = document.createElement('div'); label.textContent = labelText; label.style.marginBottom='2px';
-    const input = document.createElement('input'); input.type='range'; input.min=min; input.max=max; input.step=step; input.value = getVal();
-    const val = document.createElement('span'); val.textContent = Number(getVal()).toFixed(3); val.style.marginLeft='8px';
-    input.addEventListener('input', (e) => { setVal(Number(e.target.value)); val.textContent = Number(e.target.value).toFixed(3); });
-    row.appendChild(label); row.appendChild(input); row.appendChild(val); panel.appendChild(row);
-    return input;
-  }
-
-  // ensure globals exist
-  window.HAND_OFFSET_POS = window.HAND_OFFSET_POS || new THREE.Vector3(0.08, -0.06, -0.02);
-  window.HAND_OFFSET_ROT = window.HAND_OFFSET_ROT || new THREE.Euler(-0.35, 0.2, 0.15);
-
-  // temp camera tuning globals
-  window.__tempCameraLocalPos = window.__tempCameraLocalPos || new THREE.Vector3(0.0, 0.12, 0.06);
-  window.__tempCameraLocalRot = window.__tempCameraLocalRot || new THREE.Euler(-0.12, 0, 0);
-  window.__tempCameraBob = window.__tempCameraBob || { amp: 0.03, freq: 7.5 };
-
-  addSlider('Pos X', -0.5, 0.5, 0.005, () => window.HAND_OFFSET_POS.x, (v) => window.HAND_OFFSET_POS.x = v);
-  addSlider('Pos Y', -0.5, 0.5, 0.005, () => window.HAND_OFFSET_POS.y, (v) => window.HAND_OFFSET_POS.y = v);
-  addSlider('Pos Z', -0.5, 0.5, 0.005, () => window.HAND_OFFSET_POS.z, (v) => window.HAND_OFFSET_POS.z = v);
-  addSlider('Rot X', -Math.PI, Math.PI, 0.01, () => window.HAND_OFFSET_ROT.x, (v) => window.HAND_OFFSET_ROT.x = v);
-  addSlider('Rot Y', -Math.PI, Math.PI, 0.01, () => window.HAND_OFFSET_ROT.y, (v) => window.HAND_OFFSET_ROT.y = v);
-  addSlider('Rot Z', -Math.PI, Math.PI, 0.01, () => window.HAND_OFFSET_ROT.z, (v) => window.HAND_OFFSET_ROT.z = v);
-
-  // Separator
-  const sep = document.createElement('hr'); sep.style.border='none'; sep.style.height='1px'; sep.style.background='rgba(255,255,255,0.08)'; sep.style.margin='8px 0'; panel.appendChild(sep);
-  const title2 = document.createElement('div'); title2.textContent = 'FP Camera Tune'; title2.style.fontWeight='700'; title2.style.marginBottom='6px'; panel.appendChild(title2);
-
-  addSlider('Cam Pos X', -0.5, 0.5, 0.005, () => window.__tempCameraLocalPos.x, (v) => { window.__tempCameraLocalPos.x = v; });
-  addSlider('Cam Pos Y', -0.5, 0.5, 0.005, () => window.__tempCameraLocalPos.y, (v) => { window.__tempCameraLocalPos.y = v; });
-  addSlider('Cam Pos Z', -0.5, 0.5, 0.005, () => window.__tempCameraLocalPos.z, (v) => { window.__tempCameraLocalPos.z = v; });
-  addSlider('Cam Rot X', -Math.PI/2, Math.PI/2, 0.01, () => window.__tempCameraLocalRot.x, (v) => { window.__tempCameraLocalRot.x = v; });
-  addSlider('Cam Rot Y', -Math.PI, Math.PI, 0.01, () => window.__tempCameraLocalRot.y, (v) => { window.__tempCameraLocalRot.y = v; });
-  addSlider('Cam Rot Z', -Math.PI, Math.PI, 0.01, () => window.__tempCameraLocalRot.z, (v) => { window.__tempCameraLocalRot.z = v; });
-
-  const sep2 = document.createElement('div'); sep2.style.height='6px'; panel.appendChild(sep2);
-  const title3 = document.createElement('div'); title3.textContent = 'Cam Bob'; title3.style.fontWeight='700'; title3.style.marginBottom='6px'; panel.appendChild(title3);
-  addSlider('Bob Amp', 0, 0.1, 0.001, () => window.__tempCameraBob.amp, (v) => { window.__tempCameraBob.amp = v; });
-  addSlider('Bob Freq', 0, 20, 0.1, () => window.__tempCameraBob.freq, (v) => { window.__tempCameraBob.freq = v; });
-
-  document.body.appendChild(panel);
-
-  window.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && (e.key === 'h' || e.key === 'H')) {
-      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-      e.preventDefault();
-    }
-  });
-})();
+export {exitFishingZoom};
