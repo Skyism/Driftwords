@@ -84,6 +84,30 @@ function setupCameras() {
   if (!activeCamera) activeCamera = perspCam;
 }
 
+// Keep using the same orthoCam/isoOffset you already have.
+const BASE_FRUSTUM = frustumSize; // 50 (your current)
+const ZOOM_FRUSTUM = 16;          // how "tight" you want the zoom
+
+const BASE_ISO_DIST = 30;         // isoOffset's default length (you set it to 30)
+const ZOOM_ISO_DIST = 12;         // how close the cam gets during zoom
+
+const zoomCtl = {
+  targetHeight: BASE_FRUSTUM,
+  targetIsoDist: BASE_ISO_DIST,
+  speed: 4.5 // damping strength (higher = snappier)
+};
+
+function enterFishingZoom() {
+  zoomCtl.targetHeight = ZOOM_FRUSTUM;
+  zoomCtl.targetIsoDist = ZOOM_ISO_DIST;
+}
+
+function exitFishingZoom() {
+  zoomCtl.targetHeight = BASE_FRUSTUM;
+  zoomCtl.targetIsoDist = BASE_ISO_DIST;
+}
+
+
 setupCameras();
 
 // -------- Intro tween state --------
@@ -603,11 +627,22 @@ function animate() {
   } else {
     // ---- NORMAL ORTHO FOLLOW ----
     // Smoothly ease ortho zoom back to your standard frustumSize
-    orthoVisibleHeight = THREE.MathUtils.damp(orthoVisibleHeight, frustumSize, 3.5, dt);
+    // ---- NORMAL ORTHO FOLLOW (zoom-aware) ----
+    // 1) zoom the orthographic frustum
+    orthoVisibleHeight = THREE.MathUtils.damp(
+      orthoVisibleHeight, zoomCtl.targetHeight, zoomCtl.speed, dt
+    );
     setOrthoFrustumByHeight(orthoCam, orthoVisibleHeight);
 
+    // 2) move camera toward/away from the player along the same isometric direction
+    const curDist = isoOffset.length();
+    const newDist = THREE.MathUtils.damp(curDist, zoomCtl.targetIsoDist, zoomCtl.speed, dt);
+    isoOffset.setLength(newDist);
+
+    // 3) position + look
     orthoCam.position.copy(camTarget).add(isoOffset);
     orthoCam.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
+
   }
   renderer.render(scene, activeCamera);
   requestAnimationFrame(animate);
@@ -707,6 +742,7 @@ function hideFishModal() {
   isModalOpen = false;
   currentFish = null;
   currentBottle = null;
+  exitFishingZoom();
 }
 
 function showMyBottlesModal(bottles) {
@@ -870,6 +906,7 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => {
   if (e.code === 'KeyF' && !isModalOpen && !fishingGame.writingInterface.isActive) {
     keys.f = false;
+    enterFishingZoom();
     triggerFishing();
     e.preventDefault();
   }
@@ -881,3 +918,4 @@ window.addEventListener('keyup', (e) => {
 });
 
 export { scene };
+export {exitFishingZoom};

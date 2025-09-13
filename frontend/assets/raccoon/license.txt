@@ -1,0 +1,11 @@
+Model Information:
+* title:	Running Raccoon Animation
+* source:	https://sketchfab.com/3d-models/running-raccoon-animation-bfce4d4815234c39bcf012352e52c27e
+* author:	Santrez (https://sketchfab.com/Santrez)
+
+Model License:
+* license type:	CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
+* requirements:	Author must be credited. No commercial use.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Running Raccoon Animation" (https://sketchfab.com/3d-models/running-raccoon-animation-bfce4d4815234c39bcf012352e52c27e) by Santrez (https://sketchfab.com/Santrez) licensed under CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)

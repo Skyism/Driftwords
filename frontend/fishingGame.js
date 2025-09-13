@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { fishingAPI } from './api.js';
 import { WritingInterface } from './writingInterface.js';
-
+import {exitFishingZoom} from "./main.js";
 export class FishingGame {
   constructor(scene, camera) {
     this.scene = scene;
@@ -331,6 +331,7 @@ export class FishingGame {
   }
   
   cancel() {
+    exitFishingZoom();
     this.reset();
   }
   
