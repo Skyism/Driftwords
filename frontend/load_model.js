@@ -12,8 +12,9 @@ loader.load('assets/fish/scene.gltf', function (gltf) {
   scene.add(fish);
   fishRef = fish;
 
-  fish.position.set(0, 2, 0);
-  fish.scale.set(2, 2, 2); // Adjust scale as needed
+  fish.position.set(50, -15, 50);
+  const scale = 1;
+  fish.scale.set(scale, scale, scale); // Adjust scale as needed
 
   // Play fish animation if available
   if (gltf.animations && gltf.animations.length > 0) {
