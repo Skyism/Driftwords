@@ -5,7 +5,6 @@ import { loadFishModel, spawnFish, updateFishes, fishes } from './fish.js';
 import { fishingAPI } from './api.js';
 // BVH accelerated raycasting
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
-import { fishingAPI } from './api.js';
 // wire accelerated raycast into three
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
 // expose the compute/dispose helpers on BufferGeometry so we can call geometry.computeBoundsTree()
