@@ -2,6 +2,7 @@ import * as THREE from 'three';
 // import { Water } from 'three/addons/objects/Water.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { loadFishModel, spawnFish, updateFishes, fishes } from './fish.js';
+import { fishingAPI } from './api.js';
 // BVH accelerated raycasting
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 
@@ -644,8 +645,6 @@ cancelBtn.addEventListener('click', hideFishModal);
 choiceCancelBtn.addEventListener('click', hideChoiceModal);
 bottlesCloseBtn.addEventListener('click', hideMyBottlesModal);
 
-import fishingAPI from '../backend/fishingAPI.js'
-
 submitBtn.addEventListener('click', async () => {
   const reflection = reflectionInput.value.trim();
   if (!reflection) return;
@@ -713,6 +712,8 @@ fishForAnythingBtn.addEventListener('click', async () => {
     isModalOpen = false;
   }
 });
+
+// --- Modal System Variables (already declared above)
 
 // Fishing interaction
 async function triggerFishing() {
