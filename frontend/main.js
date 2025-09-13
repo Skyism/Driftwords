@@ -133,7 +133,7 @@ const nose = new THREE.Mesh(
 nose.position.set(0, 2.4, 0.9); nose.rotation.x = Math.PI;
 player.add(nose);
 
-player.position.set(50, 2, 50);
+player.position.set(0, 2, 0);
 scene.add(player);
 
 // --- Load your glTF model (scene.gltf + scene.bin)
@@ -264,7 +264,8 @@ function animate() {
     // BVH-accelerated downward raycast from above candidate XZ to find surface
     raycaster.set(new THREE.Vector3(next.x, next.y + RAY_HEIGHT, next.z), downDir);
     raycaster.far = RAY_HEIGHT * 2;
-    const hits = raycaster.intersectObjects(walkableMeshes, true);
+  const currentY = player.position.y;
+  const hits = raycaster.intersectObjects(walkableMeshes, true);
     if (debugEnabled) {
       const start = raycaster.ray.origin.clone();
       const end = start.clone().add(raycaster.ray.direction.clone().multiplyScalar(raycaster.far));
@@ -282,30 +283,34 @@ function animate() {
         debugNormalArrow.setDirection(normalVec);
         debugNormalArrow.visible = true;
       }
-      // ignore hits under water/void
-      if (hit.point.y > WATER_LEVEL) {
-        // accept X/Z, smoothly snap Y
-        const targetY = hit.point.y + STAND_OFFSET;
-        player.position.x = next.x;
-        player.position.z = next.z;
-        player.position.y = THREE.MathUtils.damp(player.position.y, targetY, SNAP_DAMP, dt);
 
-        // align to surface normal while preserving yaw
-        const up = new THREE.Vector3(0,1,0);
-        const normal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : up;
-        const surfaceQuat = new THREE.Quaternion().setFromUnitVectors(up, normal);
-        const targetYaw = Math.atan2(delta.x, delta.z);
-        const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), targetYaw);
-        const desiredQuat = surfaceQuat.clone().multiply(yawQuat);
-        player.quaternion.slerp(desiredQuat, 1 - Math.exp(-ROT_DAMP * dt));
+      // Accept movement when there's a surface hit (including beach/water areas).
+      const targetY = hit.point.y + STAND_OFFSET;
+      player.position.x = next.x;
+      player.position.z = next.z;
+      player.position.y = THREE.MathUtils.damp(currentY, targetY, SNAP_DAMP, dt);
 
-        // subtle bob
-        body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
-      } else {
-        // hit but under water level: block move
-      }
+      // align to surface normal while preserving yaw
+      const up = new THREE.Vector3(0,1,0);
+      const normal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : up;
+      const surfaceQuat = new THREE.Quaternion().setFromUnitVectors(up, normal);
+      const targetYaw = Math.atan2(delta.x, delta.z);
+      const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), targetYaw);
+      const desiredQuat = surfaceQuat.clone().multiply(yawQuat);
+      player.quaternion.slerp(desiredQuat, 1 - Math.exp(-ROT_DAMP * dt));
+
+      // subtle bob
+      body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
     } else {
-      // no hit: block move (avoid falling through); could implement fall physics here
+      // No hit: allow movement toward beach — damp Y toward a beach fallback level so player can reach shore
+      const beachY = WATER_LEVEL + STAND_OFFSET;
+      player.position.x = next.x;
+      player.position.z = next.z;
+      player.position.y = THREE.MathUtils.damp(currentY, beachY, Math.max(1, SNAP_DAMP / 3), dt);
+      // keep facing movement direction
+      const targetYaw = Math.atan2(delta.x, delta.z);
+      player.rotation.y = THREE.MathUtils.damp(player.rotation.y, targetYaw, 8, dt);
+      body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
     }
   } else {
     body.position.y = THREE.MathUtils.damp(body.position.y, 1.6, 6, dt);
