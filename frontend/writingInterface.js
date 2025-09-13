@@ -134,6 +134,9 @@ export class WritingInterface {
     this.onComplete = onComplete;
     this.currentText = '';
     
+    // Clear the text input
+    this.textInput.value = '';
+    
     // Position typewriter above water
     const cameraDirection = new THREE.Vector3();
     this.camera.getWorldDirection(cameraDirection);

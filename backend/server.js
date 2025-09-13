@@ -14,13 +14,13 @@ app.use(express.json());
 // API Routes
 app.post('/fish', async (req, res) => {
   try {
-    const { username } = req.body;
+    const { username, questionType } = req.body;
     
     if (!username) {
       return res.status(400).json({ error: 'Username required' });
     }
     
-    const fish = await fish_for_fish(username);
+    const fish = await fish_for_fish(username, questionType);
     
     if (!fish) {
       return res.status(404).json({ error: 'No fish available' });

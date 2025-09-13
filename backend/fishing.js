@@ -1,11 +1,18 @@
 import supabase from './supabase.js'
 
-const fish_for_fish = async (username) => {
-    const { data, error } = await supabase
+const fish_for_fish = async (username, questionType = null) => {
+    let query = supabase
         .from('fish')
         .select('*')
         .or(`fished_by.not.cs.{${username}}, fished_by.is.null`)
-        .limit(30)
+        .limit(30);
+    
+    // Filter by question type if provided
+    if (questionType) {
+        query = query.eq('type', questionType);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
         console.error('Select error:', error)
@@ -13,7 +20,7 @@ const fish_for_fish = async (username) => {
     }
 
     if (!data || data.length === 0) {
-        console.log('No fish found')
+        console.log('No fish found for type:', questionType)
         return null
     }
 

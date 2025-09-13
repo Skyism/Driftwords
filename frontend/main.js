@@ -850,7 +850,7 @@ async function showMyBottles() {
 keys.f = false;
 keys.b = false;
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyF' && !isModalOpen) {
+  if (e.code === 'KeyF' && !isModalOpen && !fishingGame.writingInterface.isActive) {
     keys.f = true;
     e.preventDefault();
   }
@@ -861,7 +861,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keyup', (e) => {
-  if (e.code === 'KeyF' && !isModalOpen) {
+  if (e.code === 'KeyF' && !isModalOpen && !fishingGame.writingInterface.isActive) {
     keys.f = false;
     triggerFishing();
     e.preventDefault();
