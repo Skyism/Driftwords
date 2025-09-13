@@ -1,11 +1,16 @@
 const API_BASE = 'http://localhost:3000';
 
 export const fishingAPI = {
-  async catchFish(username) {
+  async catchFish(username, questionType = null) {
+    const body = { username };
+    if (questionType) {
+      body.questionType = questionType;
+    }
+    
     const response = await fetch(`${API_BASE}/fish`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username })
+      body: JSON.stringify(body)
     });
     
     if (!response.ok) {

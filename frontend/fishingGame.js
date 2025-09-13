@@ -17,9 +17,8 @@ export class FishingGame {
     this.baitTypes = {
       personal: { name: 'Personal', emoji: '🌸', color: 0xff69b4 },
       philosophical: { name: 'Philosophical', emoji: '🧠', color: 0x9370db },
-      creative: { name: 'Creative', emoji: '💡', color: 0xffd700 },
-      social: { name: 'Social', emoji: '🤝', color: 0x32cd32 },
-      growth: { name: 'Growth', emoji: '🌟', color: 0xff4500 }
+      deep: { name: 'Deep', emoji: '🌊', color: 0x4682b4 },
+      fun: { name: 'Fun', emoji: '🎉', color: 0xffd700 }
     };
     
     this.writingInterface = new WritingInterface(scene, camera);
@@ -261,15 +260,14 @@ export class FishingGame {
     const baitToQuestionType = {
       personal: 'personal',
       philosophical: 'philosophical', 
-      creative: 'fun',
-      social: 'advice',
-      growth: 'deep'
+      deep: 'deep',
+      fun: 'fun'
     };
     
     const questionType = baitToQuestionType[this.selectedBait] || 'personal';
     
-    // For now, use existing API - could be enhanced to filter by question type
-    return await fishingAPI.catchFish('player');
+    // Use API with question type filtering
+    return await fishingAPI.catchFish('player', questionType);
   }
   
   async catchBottleByBait() {
