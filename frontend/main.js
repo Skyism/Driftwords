@@ -86,7 +86,7 @@ scene.add(ambient);
 // scene.add(water);
 
 // --- Island radius guard (if you’re keeping the circle island)
-const islandRadius = 60;
+const islandRadius = 120;
 
 // --- BVH + movement tuning
 const RAY_HEIGHT = 12; // how high above candidate position to cast downward
@@ -133,7 +133,7 @@ const nose = new THREE.Mesh(
 nose.position.set(0, 2.4, 0.9); nose.rotation.x = Math.PI;
 player.add(nose);
 
-player.position.set(0, 2, 0);
+player.position.set(50, 2, 50);
 scene.add(player);
 
 // --- Load your glTF model (scene.gltf + scene.bin)
