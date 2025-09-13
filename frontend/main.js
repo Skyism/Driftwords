@@ -36,7 +36,7 @@ app.appendChild(renderer.domElement);
 // --- Camera (orthographic, isometric)
 // --- Cameras (perspective intro -> orthographic isometric)
 let orthoCam, perspCam, activeCamera;
-const frustumSize = 50; // Ortho size (bigger = more zoomed out)
+const frustumSize = 40; // Ortho size (bigger = more zoomed out)
 let isoOffset = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(30);
 // Current visible height the ortho camera uses (animates after handoff)
 let orthoVisibleHeight = frustumSize;
