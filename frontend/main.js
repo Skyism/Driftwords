@@ -200,8 +200,16 @@ window.addEventListener('keyup',   (e) => { setKey(e.code, false); });
 window.addEventListener('keydown', (e) => { if (e.code === 'KeyP') debugEnabled = !debugEnabled; });
 
 function setKey(code, val) {
-  // Disable all game controls when modal is open
-  if (isModalOpen) return;
+  // Debug logging
+  if (code === 'KeyE') {
+    console.log('E key pressed, isModalOpen:', isModalOpen, 'val:', val);
+  }
+  
+  // Disable all game controls when any modal is open
+  if (isModalOpen) {
+    console.log('Modal is open, blocking key:', code);
+    return;
+  }
   
   if (code === 'KeyW') keys.w = val;
   if (code === 'KeyA') keys.a = val;
@@ -216,11 +224,18 @@ function setKey(code, val) {
   if (code === 'ShiftLeft' || code === 'ShiftRight') keys.shift = val;
 
   if (!val) return;
+  // Modal check is already above, so Q/E rotation is already blocked
   if (code === 'KeyQ') rotateIso(-Math.PI/2);
-  if (code === 'KeyE') rotateIso( Math.PI/2);
+  if (code === 'KeyE') {
+    console.log('Executing E rotation');
+    rotateIso( Math.PI/2);
+  }
 }
 
 function rotateIso(angleRad) {
+  // Don't rotate camera when any modal is open
+  if (isModalOpen) return;
+  
   isoOffset.applyAxisAngle(new THREE.Vector3(0,1,0), angleRad);
 }
 
@@ -383,15 +398,21 @@ const currentUsername = 'player'; // TODO: Get from auth system
 // Modal controls
 function showChoiceModal() {
   isModalOpen = true;
+  console.log('showChoiceModal: isModalOpen set to', isModalOpen);
   fishingChoiceModal.style.display = 'flex';
 }
 
 function hideChoiceModal() {
   fishingChoiceModal.style.display = 'none';
   isModalOpen = false;
+  console.log('hideChoiceModal: isModalOpen set to', isModalOpen);
 }
 
 function showFishModal(fish) {
+  // Hide choice modal but keep isModalOpen true
+  fishingChoiceModal.style.display = 'none';
+  isModalOpen = true; // Keep modal state active
+  
   currentFish = fish;
   currentBottle = null;
   fishQuestion.textContent = fish.question;
@@ -404,6 +425,10 @@ function showFishModal(fish) {
 }
 
 function showBottleModal(bottle) {
+  // Hide choice modal but keep isModalOpen true
+  fishingChoiceModal.style.display = 'none';
+  isModalOpen = true; // Keep modal state active
+  
   currentBottle = bottle;
   currentFish = null;
   bottleQuestion.textContent = bottle.question;
@@ -544,6 +569,15 @@ fishForAnythingBtn.addEventListener('click', async () => {
 
 // Fishing interaction
 async function triggerFishing() {
+  // Check if player is near water level
+  const playerY = player.position.y;
+  const distanceToWater = playerY - WATER_LEVEL; // Distance above water level
+  
+  if (distanceToWater > 3) { // Must be within 3 units above water level
+    console.log('Too far from water! Get closer to the shore to fish.');
+    return;
+  }
+  
   showChoiceModal();
 }
 
