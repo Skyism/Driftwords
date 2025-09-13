@@ -1,6 +1,7 @@
 {
   "name": "driftwords",
   "version": "1.0.0",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -16,5 +17,9 @@
     "url": "https://github.com/Skyism/Driftwords/issues"
   },
   "homepage": "https://github.com/Skyism/Driftwords#readme",
-  "description": ""
+  "description": "",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "dotenv": "^17.2.2"
+  }
 }
