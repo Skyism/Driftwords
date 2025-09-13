@@ -651,6 +651,8 @@ cancelBtn.addEventListener('click', hideFishModal);
 choiceCancelBtn.addEventListener('click', hideChoiceModal);
 bottlesCloseBtn.addEventListener('click', hideMyBottlesModal);
 
+import fishingAPI from '../backend/fishingAPI.js'
+
 submitBtn.addEventListener('click', async () => {
   const reflection = reflectionInput.value.trim();
   if (!reflection) return;
