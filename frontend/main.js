@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 // import { Water } from 'three/addons/objects/Water.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { fishRef } from './load_model.js';
+import { loadFishModel, spawnFish, updateFishes, fishes } from './fish.js';
 import { fishingAPI } from './api.js';
 // BVH accelerated raycasting
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
@@ -239,6 +239,22 @@ function rotateIso(angleRad) {
   isoOffset.applyAxisAngle(new THREE.Vector3(0,1,0), angleRad);
 }
 
+async function initFish() {
+  await loadFishModel();
+  spawnFish(25);               // ← spawn however many you want
+  // trickle in more fish over time (optional):
+  // setInterval(() => spawnFish(1), 4000);
+
+  // simple position logger (optional)
+  setInterval(() => {
+    const p = fishes[0]?.mesh?.position;
+    if (p) {
+      console.log(`Fish[0] @ X=${p.x.toFixed(2)} Y=${p.y.toFixed(2)} Z=${p.z.toFixed(2)}`);
+    }
+  }, 2000);
+}
+initFish();
+
 // --- Loop
 const baseSpeed = 6;
 const sprintMult = 1.6;
@@ -249,6 +265,8 @@ function animate() {
 
   // if (water.material?.uniforms?.time) water.material.uniforms.time.value += dt;
   if (mixer) mixer.update(dt);
+
+  updateFishes(dt); // ← animate + move all fish
 
   // movement (relative to camera iso orientation)
   // forward should point from camera toward the scene center (negated isoOffset)
@@ -362,14 +380,6 @@ function updateCoords() {
   coordsDisplay.textContent = `X: ${pos.x.toFixed(2)}, Y: ${pos.y.toFixed(2)}, Z: ${pos.z.toFixed(2)}`;
 }
 setInterval(updateCoords, 100); // update every 100ms
-
-setInterval(() => {
-  if (fishRef) {
-    console.log(`(main.js) Fish position: X=${fishRef.position.x.toFixed(2)}, Y=${fishRef.position.y.toFixed(2)}, Z=${fishRef.position.z.toFixed(2)}`);
-  } else {
-    console.log('(main.js) Fish not loaded yet.');
-  }
-}, 2000);
 
 // --- Fishing Modal Logic
 const fishingChoiceModal = document.getElementById('fishing-choice-modal');
