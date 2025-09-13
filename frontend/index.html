@@ -238,7 +238,7 @@
     window.addEventListener('keyup',   (e) => { setKey(e.code, false); });
 
     function setKey(code, val) {
-      if (code === 'KeyW') keys.w = val; if (code === 'KeyA') keys.a = val; if (code === 'KeyS') keys.s = val; if (code === 'KeyD') keys.d = val;
+      if (code === 'KeyW') keys.s = val; if (code === 'KeyA') keys.a = val; if (code === 'KeyS') keys.w = val; if (code === 'KeyD') keys.d = val;
       if (code === 'ArrowUp') keys.up = val; if (code === 'ArrowLeft') keys.left = val; if (code === 'ArrowDown') keys.down = val; if (code === 'ArrowRight') keys.right = val;
       if (code === 'ShiftLeft' || code === 'ShiftRight') keys.shift = val;
       if (!val) return;
