@@ -103,6 +103,7 @@ export class FishingGame {
       </div>
       <div id="meditation-timer">60s</div>
       <button id="skip-meditation" style="margin-top: 15px; display: none;">Skip (30s+)</button>
+      <button id="test-skip" style="margin-top: 10px; background: #ff4444; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer;">Skip (Testing)</button>
     `;
     
     document.body.appendChild(this.baitUI);
@@ -131,6 +132,7 @@ export class FishingGame {
   setupEventListeners() {
     document.getElementById('cancel-fishing').onclick = () => this.cancel();
     document.getElementById('skip-meditation').onclick = () => this.skipMeditation();
+    document.getElementById('test-skip').onclick = () => this.skipMeditation();
     document.getElementById('fish-option').onclick = () => this.selectType('fish');
     document.getElementById('bottle-option').onclick = () => this.selectType('bottle');
     document.getElementById('back-to-bait').onclick = () => this.backToBait();
