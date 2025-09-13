@@ -6,8 +6,8 @@ import { scene } from './main.js';
 
 export const fishes = [];         // { mesh, mixer, dir, speed, turniness, t, yCenter }
 const swimBounds = new THREE.Box3(
-  new THREE.Vector3(-50, -20, -50),
-  new THREE.Vector3( 50,  10,  50)
+  new THREE.Vector3(-75, -20, -75),
+  new THREE.Vector3( 75,  10,  75)
 );
 let baseFish = null;              // original model (loaded once)
 let baseClips = [];               // animation clips

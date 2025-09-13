@@ -319,7 +319,7 @@ function rotateIso(angleRad) {
 
 async function initFish() {
   await loadFishModel();
-  spawnFish(50);               // ← spawn however many you want
+  spawnFish(100);               // ← spawn however many you want
   // trickle in more fish over time (optional):
   // setInterval(() => spawnFish(1), 4000);
 
