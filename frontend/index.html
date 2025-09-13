@@ -272,6 +272,23 @@
       </div>
     </div>
   </div>
+  
+  <!-- Streak Button -->
+  <div id="streak-button" style="
+    position: fixed; top: 80px; right: 20px; z-index: 1000;
+    background: linear-gradient(135deg, #ff6b35, #f7931e);
+    border: none; border-radius: 25px; padding: 12px 20px;
+    color: white; font-weight: bold; font-size: 16px;
+    box-shadow: 0 4px 15px rgba(255, 107, 53, 0.3);
+    cursor: pointer; transition: all 0.3s ease;
+    display: flex; align-items: center; gap: 8px;
+    font-family: 'Arial', sans-serif;
+  " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(255, 107, 53, 0.4)'"
+     onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 15px rgba(255, 107, 53, 0.3)'">
+    <span style="font-size: 20px;">🔥</span>
+    <span>100 Day Streak!</span>
+  </div>
+  
   <div id="err"></div>
 
   <div id="player-coords">X: 0, Y: 0, Z: 0</div>

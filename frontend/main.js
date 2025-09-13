@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { loadFishModel, spawnFish, updateFishes, fishes } from './fish.js';
 import { fishingAPI } from './api.js';
+import { FishingGame } from './fishingGame.js';
+import { WritingInterface } from './writingInterface.js';
 // BVH accelerated raycasting
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 // wire accelerated raycast into three
@@ -32,33 +34,97 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 app.appendChild(renderer.domElement);
 
 // --- Camera (orthographic, isometric)
-let camera;
-const frustumSize = 50; // bigger = more zoomed out
-let isoOffset = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(30); // ≈ isometric
+// --- Cameras (perspective intro -> orthographic isometric)
+let orthoCam, perspCam, activeCamera;
+const frustumSize = 50; // Ortho size (bigger = more zoomed out)
+let isoOffset = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(30);
+// Current visible height the ortho camera uses (animates after handoff)
+let orthoVisibleHeight = frustumSize;
 
-function setupCamera() {
+// Keep ortho frustum in sync with a desired visible height
+function setOrthoFrustumByHeight(cam, visibleHeight) {
   const aspect = window.innerWidth / window.innerHeight;
-  const halfW = (frustumSize * aspect) / 2;
-  const halfH = frustumSize / 2;
-
-  const NEAR = 0.01;   // lower clip distance (see closer)
-  const FAR  = 500;    // clip sooner in the distance (optional)
-
-  if (!camera) {
-    camera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, NEAR, FAR);
-    camera.position.set(0, 1.2, 3.6);
-    camera.lookAt(0, 0, 0);
-  } else {
-    camera.left = -halfW;
-    camera.right = halfW;
-    camera.top = halfH;
-    camera.bottom = -halfH;
-    camera.near = NEAR;   // <-- update near
-    camera.far = FAR;     // <-- update far
-    camera.updateProjectionMatrix();
-  }
+  const halfH = visibleHeight / 2;
+  const halfW = halfH * aspect;
+  cam.left = -halfW; cam.right = halfW;
+  cam.top =  halfH;  cam.bottom = -halfH;
+  cam.updateProjectionMatrix();
 }
-setupCamera();
+
+// Make ortho camera show exactly what the perspective camera shows (same framing)
+function matchOrthoToPerspective(pCam, oCam, target) {
+  // world-space distance from cam to look target
+  const dist = pCam.position.distanceTo(target);
+  const visH = 2 * dist * Math.tan(THREE.MathUtils.degToRad(pCam.fov * 0.5));
+  setOrthoFrustumByHeight(oCam, visH);
+  oCam.position.copy(pCam.position);
+  oCam.quaternion.copy(pCam.quaternion);
+  return visH; // we’ll use this as the starting orthoVisibleHeight
+}
+
+function setupCameras() {
+  const aspect = window.innerWidth / window.innerHeight;
+
+  // --- Ortho camera (final)
+  if (!orthoCam) {
+    // Create once; we’ll size it by visible height
+    orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 500);
+  }
+  setOrthoFrustumByHeight(orthoCam, orthoVisibleHeight);
+
+  // --- Perspective camera (intro)
+  if (!perspCam) {
+    perspCam = new THREE.PerspectiveCamera(50, aspect, 0.01, 500);
+  } else {
+    perspCam.aspect = aspect;
+    perspCam.updateProjectionMatrix();
+  }
+
+  // start from the intro cam
+  if (!activeCamera) activeCamera = perspCam;
+}
+
+setupCameras();
+
+// -------- Intro tween state --------
+const intro = {
+  active: true,
+  t: 0,
+  dur: 2500, // ms (change to taste)
+  startPos: new THREE.Vector3(-30, 8, -20), // <- your custom start (x,y,z)
+  startYawRad: THREE.MathUtils.degToRad(25), // <- your start yaw in degrees
+  endPos: new THREE.Vector3(),  // computed on the fly each frame (follows player+iso)
+  endYawRad: 0,                 // computed each frame to face the player from iso
+  startFov: 60,
+  endFov: 24
+};
+
+// Helper: ease and angle lerp
+function easeInOutCubic(u){ return u<0.5 ? 4*u*u*u : 1 - Math.pow(-2*u+2,3)/2; }
+function lerpAngle(a, b, t) {
+  let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
+  return a + d * t;
+}
+
+// Call this once after scene loads (right after setupCameras) if you want a different start:
+function beginIntro({ x=-30, y=7.5, z=-10, yawDeg=25, durationMs=2500 } = {}) {
+  intro.active = true;
+  intro.t = 0;
+  intro.dur = durationMs;
+  intro.startPos.set(x, y, z);
+  intro.startYawRad = THREE.MathUtils.degToRad(yawDeg);
+  perspCam.position.copy(intro.startPos);
+  perspCam.fov = intro.startFov;
+  perspCam.updateProjectionMatrix();
+  activeCamera = perspCam;
+}
+
+// Example: set a very specific starting pose (edit these numbers)
+beginIntro({ x: -30, y: 8, z: -10, yawDeg: 35, durationMs: 2200 });
+
+
+// --- Initialize Fishing Game
+const fishingGame = new FishingGame(scene, activeCamera);
 
 // --- Lights
 const hemi = new THREE.HemisphereLight(0xbfdfff, 0x4b5a3a, 0.65);
@@ -131,7 +197,7 @@ scene.add(debugNormalArrow);
 
 // --- Player group (transforms + physics live here)
 const player = new THREE.Group();
-player.position.set(0, 2, 0);
+player.position.set(-30, 7.5, -20);
 scene.add(player);
 
 // --- Load your glTF environment (scene.gltf + scene.bin)
@@ -311,9 +377,9 @@ function setKey(code, val) {
     console.log('E key pressed, isModalOpen:', isModalOpen, 'val:', val);
   }
 
-  // Disable all game controls when any modal is open
-  if (isModalOpen) {
-    console.log('Modal is open, blocking key:', code);
+  // Disable all game controls when any modal is open OR writing interface is active
+  if (isModalOpen || fishingGame.writingInterface.isActive) {
+    console.log('Modal or writing interface is open, blocking key:', code);
     return;
   }
 
@@ -339,8 +405,8 @@ function setKey(code, val) {
 }
 
 function rotateIso(angleRad) {
-  // Don't rotate camera when any modal is open
-  if (isModalOpen) return;
+  // Don't rotate camera when any modal is open OR writing interface is active
+  if (isModalOpen || fishingGame.writingInterface.isActive) return;
 
   isoOffset.applyAxisAngle(new THREE.Vector3(0,1,0), angleRad);
 }
@@ -379,6 +445,9 @@ function animate() {
   // if (water.material?.uniforms?.time) water.material.uniforms.time.value += dt;
 
   updateFishes(dt); // ← animate + move all fish
+  
+  // Update fishing game
+  fishingGame.update();
 
   // after you compute currentSpeedMps, inside animate():
   if (catMixer && catActions?.walk) {
@@ -521,50 +590,22 @@ function animate() {
     }
   }
 
-  // camera follow at isometric offset
+  // camera follow at isometric offset (final target for ortho)
   const camTarget = player.position;
   // hard floor clamp: never allow player to drop below FLOOR_Y
   if (player.position.y < FLOOR_Y) player.position.y = FLOOR_Y;
   camera.position.copy(camTarget).add(isoOffset);
   camera.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
-  // When a temp FP camera is active, update its pose to follow bone and add bob motion
-  if (window.__tempCameraActive && window.__tempCamera) {
-    const tcam = window.__tempCamera;
-    if (window.__tempCameraFollowBone && window.__tempCameraBone) {
-      const bone = window.__tempCameraBone;
-      const bonePos = new THREE.Vector3(); bone.getWorldPosition(bonePos);
-      const boneQuat = new THREE.Quaternion(); bone.getWorldQuaternion(boneQuat);
-      // apply local offset
-      const localPos = window.__tempCameraLocalPos.clone().applyQuaternion(boneQuat);
-      const targetPos = bonePos.clone().add(localPos);
-      // compose rotation from bone + local
-      const localQuat = new THREE.Quaternion().setFromEuler(window.__tempCameraLocalRot);
-      const targetQuat = boneQuat.clone().multiply(localQuat);
-      // bob effect
-      const now = performance.now() / 1000;
-      const bob = window.__tempCameraBob || { amp: 0.03, freq: 7.5 };
-      const bobOffset = Math.sin(now * bob.freq) * bob.amp * (window.__tempCameraBobMult || 1);
-      targetPos.y += bobOffset;
-      // subtle camera roll/pitch from bob
-      const bobPitch = Math.sin(now * bob.freq * 1.3) * 0.01;
-      const bobRoll = Math.cos(now * bob.freq * 1.1) * 0.007;
-      const bobQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(bobPitch, 0, bobRoll));
-      targetQuat.multiply(bobQuat);
-      // smooth lerp to target
-      tcam.position.lerp(targetPos, 0.35);
-      THREE.Quaternion.slerp(tcam.quaternion, targetQuat, tcam.quaternion, 0.35);
-    }
-    renderer.render(scene, tcam);
-  } else {
-    renderer.render(scene, camera);
-  }
+
+  // render
+  renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
 animate();
 
 // --- Resize
 window.addEventListener('resize', () => {
-  setupCamera();
+  setupCameras();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
@@ -788,359 +829,7 @@ async function triggerFishing() {
     return;
   }
   
-  // run the fishing animation sequence (cast, wait, reel) then show result
-  await playFishingSequence();
-}
-
-// --- Fishing visuals & sequence (fancier: rod + visible line + splash + camera nudge)
-async function playFishingSequence() {
-  if (window.__isFishing) return; // prevent multiple simultaneous rods
-  window.__isFishing = true;
-  // create rod (thin cylinder) parented to player
-  const rod = new THREE.Group();
-  // make a simple rod with handle + thin tip
-  const handleGeom = new THREE.CylinderGeometry(0.06, 0.06, 0.6, 8);
-  const handleMat = new THREE.MeshStandardMaterial({ color: 0x5a3b2a, metalness: 0.2, roughness: 0.6 });
-  const handle = new THREE.Mesh(handleGeom, handleMat);
-  handle.rotation.z = Math.PI/2;
-  handle.position.set(0.4, 1.0, 0.6);
-  rod.add(handle);
-  const tipGeom = new THREE.CylinderGeometry(0.015, 0.02, 2.0, 6);
-  const tipMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.7, roughness: 0.25 });
-  const tip = new THREE.Mesh(tipGeom, tipMat);
-  tip.rotation.z = Math.PI/2.6;
-  tip.position.set(0.9, 1.05, 0.6);
-  rod.add(tip);
-
-  // lure
-  const lureGeom = new THREE.SphereGeometry(0.09, 10, 10);
-  const lureMat = new THREE.MeshStandardMaterial({ color: 0xffdd66, emissive: 0xffaa33, emissiveIntensity: 0.6 });
-  const lure = new THREE.Mesh(lureGeom, lureMat);
-  lure.position.set(1.2, 0.6, 0);
-  rod.add(lure);
-
-  // visible curved fishing line (Bezier sampled)
-  const lineMat = new THREE.LineBasicMaterial({ color: 0xe6f7ff, transparent: true, opacity: 0.95, linewidth: 2 });
-  const linePts = new Array(24).fill().map(() => new THREE.Vector3());
-  const lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
-  const line = new THREE.Line(lineGeo, lineMat);
-  scene.add(line);
-
-  // try to attach to the cat's hand bone for a hand-held look
-  let rodParent = player;
-  let foundBone = null;
-  if (catRoot) {
-  // common bone names to try
-  const boneNames = ['RightHand','Hand_R','hand.R','hand_r','Right_Wrist','mixamorigRightHand','rightHand','RightHand_IK'];
-    catRoot.traverse((o) => {
-      if (foundBone) return;
-      if (o.isBone || o.type === 'Bone' || /Bone/i.test(o.type) || o.isObject3D) {
-        if (boneNames.includes(o.name)) foundBone = o;
-      }
-    });
-    // last resort: find first bone-like object with 'hand' in the name
-    if (!foundBone) {
-      catRoot.traverse((o) => { if (!foundBone && /hand/i.test(o.name)) foundBone = o; });
-    }
-    if (foundBone) {
-      rodParent = foundBone;
-      console.log('Attaching rod to bone:', foundBone.name || foundBone.uuid);
-    } else {
-      rodParent = player;
-    }
-  }
-  rodParent.add(rod);
-  // if we attached to a bone (not the player root), apply a small local offset so the rod sits naturally in the paw
-  if (rodParent !== player) {
-    rod.position.set(0.08, -0.06, -0.02); // tuned translation
-    rod.rotation.set(-0.35, 0.2, 0.15);   // tuned rotation (radians)
-    // slightly scale down so it doesn't clip
-    rod.scale.setScalar(0.98);
-  } else {
-    // default placement when parented to player
-    rod.position.set(0,0,0);
-    rod.rotation.set(0,0,0);
-  }
-
-  
-
-  // compute cast direction: use the cat's world forward direction, fallback to player
-  const dir = new THREE.Vector3();
-  // forward-vector debug overlay (lazy create)
-  function ensureForwardOverlay() {
-    if (document.getElementById('forward-overlay')) return document.getElementById('forward-overlay');
-    const div = document.createElement('div');
-    div.id = 'forward-overlay';
-    div.style.position = 'fixed';
-    div.style.left = '12px';
-    div.style.bottom = '12px';
-    div.style.padding = '8px 10px';
-    div.style.background = 'rgba(0,0,0,0.6)';
-    div.style.color = '#fff';
-    div.style.fontFamily = 'monospace';
-    div.style.fontSize = '12px';
-    div.style.borderRadius = '6px';
-    div.style.zIndex = 99999;
-    div.style.pointerEvents = 'none';
-    div.innerHTML = '<div><strong>Forwards</strong></div><div id="fo-hand">hand: - </div><div id="fo-cat">cat: - </div><div id="fo-player">player: - </div>';
-    document.body.appendChild(div);
-    return div;
-  }
-  // use catRoot forward (preferred)
-  const ov = ensureForwardOverlay();
-  if (catRoot && typeof catRoot.getWorldDirection === 'function') {
-    catRoot.getWorldDirection(dir);
-    // overlay
-    const cd = new THREE.Vector3(); catRoot.getWorldDirection(cd); ov.querySelector('#fo-cat').textContent = `cat: ${cd.x.toFixed(2)}, ${cd.y.toFixed(2)}, ${cd.z.toFixed(2)}`;
-    ov.querySelector('#fo-hand').textContent = `hand: -`;
-  } else if (player && typeof player.getWorldDirection === 'function') {
-    player.getWorldDirection(dir);
-    ov.querySelector('#fo-player').textContent = `player: ${dir.x.toFixed(2)}, ${dir.y.toFixed(2)}, ${dir.z.toFixed(2)}`;
-    ov.querySelector('#fo-hand').textContent = `hand: -`;
-  }
-  // also update player overlay for comparison
-  if (player && typeof player.getWorldDirection === 'function') { const pd = new THREE.Vector3(); player.getWorldDirection(pd); ov.querySelector('#fo-player').textContent = `player: ${pd.x.toFixed(2)}, ${pd.y.toFixed(2)}, ${pd.z.toFixed(2)}`; }
-  // auto-hide after 4s
-  clearTimeout(window.__forwardOverlayTimeout);
-  window.__forwardOverlayTimeout = setTimeout(() => { try { ov.style.display = 'none'; } catch(e){} }, 4000);
-  ov.style.display = 'block';
-  // prefer catRoot/player forward via helper
-  const pdir = getPlayerDirection();
-  const castTarget = player.position.clone().add(pdir.clone().multiplyScalar(5.0));
-  castTarget.y = WATER_LEVEL - 0.05;
-  // debug: log cast direction and cat facing
-  try {
-    const catF = new THREE.Vector3(); if (catRoot) { const wp = new THREE.Vector3(); catRoot.getWorldPosition(wp); const fp = catRoot.localToWorld(new THREE.Vector3(0,0,1)); catF.copy(fp).sub(wp).setY(0).normalize(); }
-    console.debug('[fishing] cast direction (pdir)=', pdir.clone().setY(0).normalize().toArray(), ' catFacing=', catF.toArray());
-  } catch (e) { console.debug('[fishing] debug log failed', e); }
-
-  const castDuration = 0.6;
-  const waitDuration = 1.8;
-  const reelDuration = 0.9;
-
-  // basic tween that interpolates a world vector
-  function tweenWorld(from, to, dur, onUpdate) {
-    return new Promise((resolve) => {
-      const start = performance.now();
-      function step(now) {
-        const t = Math.min(1, (now - start) / (dur * 1000));
-        const ease = 1 - Math.pow(1 - t, 3);
-        const cur = from.clone().lerp(to, ease);
-        onUpdate(cur, ease);
-        if (t < 1) requestAnimationFrame(step); else resolve();
-      }
-      requestAnimationFrame(step);
-    });
-  }
-
-  // cast outward
-  const lureStart = lure.getWorldPosition(new THREE.Vector3());
-  await tweenWorld(lureStart, castTarget, castDuration, (pos, p) => {
-    const local = rod.worldToLocal(pos.clone());
-    lure.position.copy(local);
-    // update curved line points
-    const p0 = player.localToWorld(new THREE.Vector3(0.6, 1.05, 0.6));
-    const p1 = lure.getWorldPosition(new THREE.Vector3());
-    // quadratic bezier: control point halfway with slight lift
-    const ctrl = p0.clone().lerp(p1, 0.5).add(new THREE.Vector3(0, 0.5 + 0.8 * p, 0));
-    for (let i=0;i<linePts.length;i++) {
-      const t = i / (linePts.length - 1);
-      const a = p0.clone().multiplyScalar((1-t)*(1-t));
-      const b = ctrl.clone().multiplyScalar(2*(1-t)*t);
-      const c = p1.clone().multiplyScalar(t*t);
-      linePts[i].copy(a.add(b).add(c));
-    }
-    line.geometry.setFromPoints(linePts);
-    line.material.opacity = 0.95 - 0.5 * p;
-    rod.rotation.x = -0.35 * p; // cast angle
-  });
-
-  // splash particles at cast target
-  spawnSplash(castTarget, 12);
-
-  // waiting sparkle
-  const sparkle = setInterval(() => { lure.material.emissiveIntensity = 0.3 + Math.random() * 1.0; lure.scale.setScalar(1.0 + Math.random() * 0.06); }, 90);
-  await new Promise(r => setTimeout(r, waitDuration * 1000));
-  clearInterval(sparkle);
-  lure.material.emissiveIntensity = 0.0;
-  lure.scale.setScalar(1);
-
-  // reel in
-  const reelTargetWorld = player.localToWorld(new THREE.Vector3(0.6, 1.05, 0.6));
-  const lureWorldStart = lure.getWorldPosition(new THREE.Vector3());
-  
-  await tweenWorld(lureWorldStart, reelTargetWorld, reelDuration, (pos, p) => {
-    const local = rod.worldToLocal(pos.clone());
-    lure.position.copy(local);
-    const p0 = player.localToWorld(new THREE.Vector3(0.6, 1.05, 0.6));
-    const p1 = lure.getWorldPosition(new THREE.Vector3());
-    const ctrl = p0.clone().lerp(p1, 0.5).add(new THREE.Vector3(0, 0.5 * (1-p), 0));
-    for (let i=0;i<linePts.length;i++) {
-      const t = i / (linePts.length - 1);
-      const a = p0.clone().multiplyScalar((1-t)*(1-t));
-      const b = ctrl.clone().multiplyScalar(2*(1-t)*t);
-      const c = p1.clone().multiplyScalar(t*t);
-      linePts[i].copy(a.add(b).add(c));
-    }
-    line.geometry.setFromPoints(linePts);
-    rod.rotation.x = -0.35 * (1 - p);
-    // stronger camera shake
-    camera.position.add(new THREE.Vector3((Math.random()-0.5)*0.06 * p, (Math.random()-0.5)*0.03 * p, (Math.random()-0.5)*0.06 * p));
-  });
-
-  // flashy catch effect
-  const flash = new THREE.PointLight(0xffeeaa, 2.6, 10);
-  flash.position.copy(lure.getWorldPosition(new THREE.Vector3()));
-  scene.add(flash);
-  setTimeout(() => scene.remove(flash), 420);
-
-  // small splash at reel-in
-  spawnSplash(reelTargetWorld, 20);
-  // animate rod disappearing (scale down + fade) when reeling completes
-  (function vanishRod(r) {
-    const start = performance.now();
-    const duration = 350;
-    const initialScale = r.scale.clone();
-    const initialMat = [];
-    r.traverse(o => { if (o.isMesh) initialMat.push(o.material); });
-    function step(now) {
-      const t = Math.min(1, (now - start) / duration);
-      const s = 1 - t;
-      r.scale.setScalar(initialScale.x * s);
-      // fade materials
-      initialMat.forEach(m => { if (m && 'opacity' in m) m.opacity = (m.opacity || 1) * s; if (m && m.transparent !== true) m.transparent = true; });
-      if (t < 1) requestAnimationFrame(step); else { if (r.parent) r.parent.remove(r); }
-    }
-    requestAnimationFrame(step);
-  })(rod);
-
-  // cleanup
-  try {
-    // determine catch and show modal once
-    const caughtFish = Math.random() < 0.6;
-    await new Promise(r => setTimeout(r, 200));
-    if (caughtFish) {
-      try {
-        const fish = await fishingAPI.catchFish(currentUsername);
-        showFishModal(fish);
-      } catch (err) {
-        showFishModal({ id: 'local', question: 'A playful fish!', description: 'You caught a local fish.' });
-      }
-    } else {
-      try {
-        const bottle = await fishingAPI.catchBottle(currentUsername);
-        showBottleModal(bottle);
-      } catch (err) {
-        showBottleModal({ question: 'A drift bottle', username: 'mysterious', message: 'A short note...' });
-      }
-    }
-  } finally {
-    // ensure cleanup happens and allow fishing again
-    if (rod.parent) rod.parent.remove(rod);
-    scene.remove(line);
-    window.__isFishing = false;
-    // tween back camera (if temp camera active) with fade-to-black
-    if (window.__tempCameraActive && window.__tempCamera) {
-      const fadeEl = (function(){ return document.getElementById('camera-fade') || null; })();
-      // fade to black
-      if (fadeEl) fadeEl.style.opacity = '1';
-      // short delay to ensure fade covers transition
-      await new Promise(r => setTimeout(r, 160));
-  const endPos = camera.position.clone();
-  const endQuat = camera.quaternion.clone();
-      const startPos = window.__tempCamera.position.clone();
-      const startQuat = window.__tempCamera.quaternion.clone();
-      const duration = 0.45;
-      const startT = performance.now();
-      await new Promise((resolve) => {
-        (function step(now){
-          const t = Math.min(1, (now - startT) / (duration * 1000));
-          const ease = 1 - Math.pow(1 - t, 3);
-          const cur = startPos.clone().lerp(endPos, ease);
-          window.__tempCamera.position.copy(cur);
-          THREE.Quaternion.slerp(startQuat, endQuat, window.__tempCamera.quaternion, ease);
-          if (t < 1) requestAnimationFrame(step); else resolve();
-        })(performance.now());
-      });
-      // clear temp camera and fade back in
-      window.__tempCameraActive = false;
-      delete window.__tempCamera;
-      if (fadeEl) {
-        fadeEl.style.opacity = '0';
-        await new Promise(r => setTimeout(r, 260));
-      }
-    }
-  }
-
-}
-
-// spawn a tiny circular splash particle effect at world position
-function spawnSplash(pos, count = 10) {
-  for (let i=0;i<count;i++) {
-    // create a foam sprite at splash position
-    (function spawnFoam() {
-      const size = 0.6 + Math.random() * 1.2;
-      // generate small canvas texture for foam
-      const c = document.createElement('canvas'); c.width = 64; c.height = 64;
-      const ctx = c.getContext('2d');
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      ctx.beginPath(); ctx.arc(32,32,20,0,Math.PI*2); ctx.fill();
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.arc(32,32,10,0,Math.PI*2); ctx.fill();
-      const tex = new THREE.CanvasTexture(c);
-      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.95 });
-      const sprite = new THREE.Sprite(mat);
-      sprite.scale.set(size, size, 1);
-      sprite.position.copy(pos).add(new THREE.Vector3((Math.random()-0.5)*0.6, 0.015, (Math.random()-0.5)*0.6));
-      scene.add(sprite);
-      const life = 900 + Math.random()*500; const start = performance.now();
-      (function fade() {
-        const t = (performance.now() - start) / life;
-        if (t >= 1) { scene.remove(sprite); tex.dispose(); return; }
-        sprite.material.opacity = 0.95 * (1 - t);
-        requestAnimationFrame(fade);
-      })();
-    })();
-    // main ripple
-    const rippleR = 0.12 + Math.random() * 0.28;
-    const g = new THREE.RingGeometry(rippleR * 0.6, rippleR, 16);
-    const m = new THREE.MeshBasicMaterial({ color: 0xcceeff, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
-    const p = new THREE.Mesh(g, m);
-    p.rotation.x = -Math.PI/2;
-    p.position.copy(pos).add(new THREE.Vector3((Math.random()-0.5)*0.8, 0.01, (Math.random()-0.5)*0.8));
-    p.scale.setScalar(0.8 + Math.random()*1.6);
-    scene.add(p);
-
-    // a few rising droplets
-    const droCount = 1 + Math.floor(Math.random()*3);
-    for (let d=0; d<droCount; d++) {
-      const dg = new THREE.SphereGeometry(0.02 + Math.random()*0.05, 6, 6);
-      const dm = new THREE.MeshStandardMaterial({ color: 0xcfeeff, metalness: 0.1, roughness: 0.6, transparent: true, opacity: 0.95 });
-      const drop = new THREE.Mesh(dg, dm);
-      drop.position.copy(pos).add(new THREE.Vector3((Math.random()-0.5)*0.6, 0.02 + Math.random()*0.08, (Math.random()-0.5)*0.6));
-      scene.add(drop);
-      const life = 600 + Math.random()*400;
-      const start = performance.now();
-      (function animDrop(){
-        const t = (performance.now() - start) / life;
-        if (t >= 1) { scene.remove(drop); return; }
-        drop.position.y += 0.004 + 0.006 * (1 - t);
-        drop.material.opacity = 0.95 * (1 - t);
-        requestAnimationFrame(animDrop);
-      })();
-    }
-
-    // animate ripple expand + fade
-    const lifetime = 700 + Math.random()*400;
-    const start = performance.now();
-    (function animateParticle() {
-      const t = (performance.now() - start) / lifetime;
-      if (t >= 1) { scene.remove(p); return; }
-      p.scale.setScalar(0.8 + t * 2.2);
-      p.material.opacity = 0.95 * (1 - t);
-      requestAnimationFrame(animateParticle);
-    })();
-  }
+  showChoiceModal();
 }
 
 async function showMyBottles() {
@@ -1160,7 +849,7 @@ window.addEventListener('keydown', (e) => {
     keys.f = true;
     e.preventDefault();
   }
-  if (e.code === 'KeyB' && !isModalOpen) {
+  if (e.code === 'KeyB' && !isModalOpen && !fishingGame.writingInterface.isActive) {
     keys.b = true;
     e.preventDefault();
   }
@@ -1172,7 +861,7 @@ window.addEventListener('keyup', (e) => {
     triggerFishing();
     e.preventDefault();
   }
-  if (e.code === 'KeyB' && !isModalOpen) {
+  if (e.code === 'KeyB' && !isModalOpen && !fishingGame.writingInterface.isActive) {
     keys.b = false;
     showMyBottles();
     e.preventDefault();
