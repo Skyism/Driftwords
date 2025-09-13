@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { loadFishModel, spawnFish, updateFishes, fishes } from './fish.js';
 import { fishingAPI } from './api.js';
+import { FishingGame } from './fishingGame.js';
+import { WritingInterface } from './writingInterface.js';
 // BVH accelerated raycasting
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 // wire accelerated raycast into three
@@ -59,6 +61,9 @@ function setupCamera() {
   }
 }
 setupCamera();
+
+// --- Initialize Fishing Game
+const fishingGame = new FishingGame(scene, camera);
 
 // --- Lights
 const hemi = new THREE.HemisphereLight(0xbfdfff, 0x4b5a3a, 0.65);
@@ -283,9 +288,9 @@ function setKey(code, val) {
     console.log('E key pressed, isModalOpen:', isModalOpen, 'val:', val);
   }
 
-  // Disable all game controls when any modal is open
-  if (isModalOpen) {
-    console.log('Modal is open, blocking key:', code);
+  // Disable all game controls when any modal is open OR writing interface is active
+  if (isModalOpen || fishingGame.writingInterface.isActive) {
+    console.log('Modal or writing interface is open, blocking key:', code);
     return;
   }
 
@@ -311,8 +316,8 @@ function setKey(code, val) {
 }
 
 function rotateIso(angleRad) {
-  // Don't rotate camera when any modal is open
-  if (isModalOpen) return;
+  // Don't rotate camera when any modal is open OR writing interface is active
+  if (isModalOpen || fishingGame.writingInterface.isActive) return;
 
   isoOffset.applyAxisAngle(new THREE.Vector3(0,1,0), angleRad);
 }
@@ -351,6 +356,9 @@ function animate() {
   // if (water.material?.uniforms?.time) water.material.uniforms.time.value += dt;
 
   updateFishes(dt); // ← animate + move all fish
+  
+  // Update fishing game
+  fishingGame.update();
 
   // after you compute currentSpeedMps, inside animate():
   if (catMixer && catActions?.walk) {
@@ -732,7 +740,8 @@ async function triggerFishing() {
     return;
   }
   
-  showChoiceModal();
+  // Start the new fishing game
+  fishingGame.startFishing();
 }
 
 async function showMyBottles() {
