@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 // import { Water } from 'three/addons/objects/Water.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { fishRef } from './load_model.js';
+import { loadFishModel, spawnFish, updateFishes, fishes } from './fish.js';
 // BVH accelerated raycasting
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
+
 // wire accelerated raycast into three
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
 // expose the compute/dispose helpers on BufferGeometry so we can call geometry.computeBoundsTree()
@@ -128,29 +129,14 @@ debugNormalArrow = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vec
 debugNormalArrow.visible = false;
 scene.add(debugNormalArrow);
 
-// --- Player
+// --- Player group (transforms + physics live here)
 const player = new THREE.Group();
-const body = new THREE.Mesh(
-  new THREE.CapsuleGeometry(0.8, 1.6, 8, 16),
-  new THREE.MeshStandardMaterial({ color: 0x8bb3ff, roughness: 0.5 })
-);
-body.castShadow = true; body.receiveShadow = true;
-body.position.y = 1.5;
-player.add(body);
-
-const nose = new THREE.Mesh(
-  new THREE.ConeGeometry(0.25, 0.6, 12),
-  new THREE.MeshStandardMaterial({ color: 0xffd28b })
-);
-nose.position.set(0, 2.4, 0.9); nose.rotation.x = Math.PI;
-player.add(nose);
-
 player.position.set(0, 2, 0);
 scene.add(player);
 
-// --- Load your glTF model (scene.gltf + scene.bin)
+// --- Load your glTF environment (scene.gltf + scene.bin)
 const loader = new GLTFLoader();
-let mixer = null;
+let envMixer = null;
 
 loader.load(
   'assets/scene.gltf',
@@ -193,15 +179,96 @@ loader.load(
 
     scene.add(root);
 
-    // Play any animations
+    // Play any animations on the environment
     if (gltf.animations?.length) {
-      mixer = new THREE.AnimationMixer(root);
-      gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
+      envMixer = new THREE.AnimationMixer(root);
+      gltf.animations.forEach((clip) => envMixer.clipAction(clip).play());
     }
   },
   undefined,
   (err) => showErr('Model load note: ' + (err?.message || err) + '\nPlace your files at assets/scene.gltf and assets/scene.bin.')
 );
+
+// ----------------- Cat (player avatar) -----------------
+const CAT_PATH = 'assets/cat/scene.gltf'; // put scene.gltf, scene.bin, textures/ under assets/cat/
+const CAT_SCALE = 1.5;                    // adjust if the cat is too big/small
+const CAT_FACES_POS_Z = true;             // flip to false if your cat faces the wrong way
+const WALK_MPS_AT_1X = 1.2;               // world meters/sec that looks right at timeScale=1
+
+let catRoot = null;
+let catMixer = null;
+let catActions = { idle: null, walk: null };
+let activeAction = null;
+
+// small helper: fuzzy clip lookup
+function getClip(gltf, names) {
+  const n = names.map(s => s.toLowerCase());
+  return gltf.animations.find(c => n.some(t => c.name.toLowerCase().includes(t))) || null;
+}
+
+// cross-fade helper
+function fadeTo(action, duration = 0.2) {
+  if (!action || action === activeAction) return;
+  if (activeAction) activeAction.crossFadeTo(action, duration, false);
+  activeAction = action;
+}
+
+// helper + play-state flag (place near your other top-level vars)
+let walkPlaying = false;
+function anyMoveKeyDown() {
+  return keys.w || keys.a || keys.s || keys.d ||
+         keys.up || keys.left || keys.down || keys.right;
+}
+
+const catLoader = new GLTFLoader();
+catLoader.load(
+  CAT_PATH,
+  (gltf) => {
+    catRoot = gltf.scene || gltf.scenes?.[0];
+
+    // shadows
+    catRoot.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }});
+
+    // scale & orientation
+    catRoot.scale.setScalar(CAT_SCALE);
+    if (!CAT_FACES_POS_Z) catRoot.rotation.y = Math.PI; // face +Z for our “forward” math
+
+    // center horizontally; keep feet near y=0
+    const bbox = new THREE.Box3().setFromObject(catRoot);
+    const size = new THREE.Vector3(); bbox.getSize(size);
+    const center = new THREE.Vector3(); bbox.getCenter(center);
+    catRoot.position.x -= center.x;
+    catRoot.position.z -= center.z;
+    catRoot.position.y -= bbox.min.y; // rest feet at y≈0
+
+    const CAT_EXTRA_LIFT = 8; // small lift; ground snap handles the rest
+    catRoot.position.y += CAT_EXTRA_LIFT;
+
+    // parent under player transform so all movement/tilt applies
+    player.add(catRoot);
+
+    // --- Animations: name-agnostic, play only when move keys are down ---
+    catMixer = new THREE.AnimationMixer(catRoot);
+
+    // choose the longest clip as our "walk" clip
+    if (gltf.animations && gltf.animations.length) {
+      const primaryClip =
+        gltf.animations.reduce((best, c) =>
+          (!best || c.duration > best.duration) ? c : best, null);
+
+      catActions = catActions || {};
+      catActions.walk = catMixer.clipAction(primaryClip);
+      catActions.walk.setLoop(THREE.LoopRepeat, Infinity);
+      catActions.walk.clampWhenFinished = false;
+      // do NOT play here — we’ll start/stop in animate() based on key state
+    } else {
+      console.warn('Cat model has no animations.');
+    }
+  },
+  undefined,
+  (err) => showErr('Cat load failed: ' + (err?.message || err))
+);
+
 
 // --- Movement state
 const keys = { w:false, a:false, s:false, d:false, up:false, left:false, down:false, right:false, shift:false };
@@ -211,6 +278,17 @@ window.addEventListener('keyup',   (e) => { setKey(e.code, false); });
 window.addEventListener('keydown', (e) => { if (e.code === 'KeyP') debugEnabled = !debugEnabled; });
 
 function setKey(code, val) {
+  // Debug logging
+  if (code === 'KeyE') {
+    console.log('E key pressed, isModalOpen:', isModalOpen, 'val:', val);
+  }
+
+  // Disable all game controls when any modal is open
+  if (isModalOpen) {
+    console.log('Modal is open, blocking key:', code);
+    return;
+  }
+
   if (code === 'KeyW') keys.w = val;
   if (code === 'KeyA') keys.a = val;
   if (code === 'KeyS') keys.s = val;
@@ -224,24 +302,74 @@ function setKey(code, val) {
   if (code === 'ShiftLeft' || code === 'ShiftRight') keys.shift = val;
 
   if (!val) return;
+  // Modal check is already above, so Q/E rotation is already blocked
   if (code === 'KeyQ') rotateIso(-Math.PI/2);
-  if (code === 'KeyE') rotateIso( Math.PI/2);
+  if (code === 'KeyE') {
+    console.log('Executing E rotation');
+    rotateIso( Math.PI/2);
+  }
 }
 
 function rotateIso(angleRad) {
+  // Don't rotate camera when any modal is open
+  if (isModalOpen) return;
+
   isoOffset.applyAxisAngle(new THREE.Vector3(0,1,0), angleRad);
 }
+
+async function initFish() {
+  await loadFishModel();
+  spawnFish(25);               // ← spawn however many you want
+  // trickle in more fish over time (optional):
+  // setInterval(() => spawnFish(1), 4000);
+
+  // simple position logger (optional)
+  setInterval(() => {
+    const p = fishes[0]?.mesh?.position;
+    if (p) {
+      console.log(`Fish[0] @ X=${p.x.toFixed(2)} Y=${p.y.toFixed(2)} Z=${p.z.toFixed(2)}`);
+    }
+  }, 2000);
+}
+initFish();
 
 // --- Loop
 const baseSpeed = 6;
 const sprintMult = 1.6;
 const clock = new THREE.Clock();
 
+let prevPlayerPos = new THREE.Vector3();
+let currentSpeedMps = 0; // measured world speed (XZ), meters/sec
+prevPlayerPos.copy(player.position);
+
 function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
 
+  if (envMixer) envMixer.update(dt);
+  if (catMixer) catMixer.update(dt);
+
   // if (water.material?.uniforms?.time) water.material.uniforms.time.value += dt;
-  if (mixer) mixer.update(dt);
+
+  updateFishes(dt); // ← animate + move all fish
+
+  // after you compute currentSpeedMps, inside animate():
+  if (catMixer && catActions?.walk) {
+  const MOVING_KEYS = anyMoveKeyDown();
+    if (MOVING_KEYS) {
+      if (!walkPlaying) {
+        catActions.walk.reset().play();
+        walkPlaying = true;
+      }
+    // optional: sync foot speed to world speed
+      catActions.walk.timeScale = THREE.MathUtils.clamp(
+      currentSpeedMps / WALK_MPS_AT_1X, 0.1, 3.5
+    );
+    } else if (walkPlaying) {
+      catActions.walk.stop();
+      walkPlaying = false;
+    }
+  }
+
 
   // movement (relative to camera iso orientation)
   // forward should point from camera toward the scene center (negated isoOffset)
@@ -276,8 +404,9 @@ function animate() {
     // BVH-accelerated downward raycast from above candidate XZ to find surface
     raycaster.set(new THREE.Vector3(next.x, next.y + RAY_HEIGHT, next.z), downDir);
     raycaster.far = RAY_HEIGHT * 2;
-  const currentY = player.position.y;
-  const hits = raycaster.intersectObjects(walkableMeshes, true);
+    const currentY = player.position.y;
+    const hits = raycaster.intersectObjects(walkableMeshes, true);
+
     if (debugEnabled) {
       const start = raycaster.ray.origin.clone();
       const end = start.clone().add(raycaster.ray.direction.clone().multiplyScalar(raycaster.far));
@@ -287,6 +416,7 @@ function animate() {
       debugRayLine.visible = false;
       debugNormalArrow.visible = false;
     }
+
     if (hits.length > 0) {
       const hit = hits[0];
       if (debugEnabled) {
@@ -316,9 +446,6 @@ function animate() {
       const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), targetYaw);
       const desiredQuat = surfaceQuat.clone().multiply(yawQuat);
       player.quaternion.slerp(desiredQuat, 1 - Math.exp(-ROT_DAMP * dt));
-
-      // subtle bob
-      body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
     } else {
       // No hit: allow movement toward beach — damp Y toward a beach fallback level so player can reach shore
       const beachY = WATER_LEVEL + STAND_OFFSET;
@@ -335,8 +462,28 @@ function animate() {
         body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
       }
     }
-  } else {
-    body.position.y = THREE.MathUtils.damp(body.position.y, 1.6, 6, dt);
+  }
+
+  // === After player.position has been updated for this frame ===
+  // measure actual horizontal speed to drive animation
+  const dx = player.position.x - prevPlayerPos.x;
+  const dz = player.position.z - prevPlayerPos.z;
+  const dist = Math.hypot(dx, dz);
+  currentSpeedMps = dist / Math.max(dt, 1e-6);  // meters/second in world units
+  prevPlayerPos.copy(player.position);
+
+  // animation state machine: Idle <-> Walk
+  if (catMixer && (catActions.idle || catActions.walk)) {
+    const MOVING = currentSpeedMps > 0.05; // deadzone to avoid jitter
+    if (MOVING && catActions.walk) {
+      // normalize timeScale so feet match ground speed
+      const tScale = THREE.MathUtils.clamp(currentSpeedMps / WALK_MPS_AT_1X, 0.1, 3.5);
+      catActions.walk.timeScale = tScale;
+      fadeTo(catActions.walk, 0.12);
+    } else if (!MOVING && catActions.idle) {
+      catActions.idle.timeScale = 1;
+      fadeTo(catActions.idle, 0.15);
+    }
   }
 
   // camera follow at isometric offset
@@ -369,12 +516,250 @@ function updateCoords() {
 }
 setInterval(updateCoords, 100); // update every 100ms
 
-setInterval(() => {
-  if (fishRef) {
-    console.log(`(main.js) Fish position: X=${fishRef.position.x.toFixed(2)}, Y=${fishRef.position.y.toFixed(2)}, Z=${fishRef.position.z.toFixed(2)}`);
+// --- Fishing Modal Logic
+const fishingChoiceModal = document.getElementById('fishing-choice-modal');
+const fishModal = document.getElementById('fish-modal');
+const myBottlesModal = document.getElementById('my-bottles-modal');
+const bottlesList = document.getElementById('bottles-list');
+const bottlesCloseBtn = document.getElementById('bottles-close-btn');
+const fishQuestion = document.getElementById('fish-question');
+const bottleContent = document.getElementById('bottle-content');
+const bottleQuestion = document.getElementById('bottle-question');
+const bottleAuthor = document.getElementById('bottle-author');
+const bottleMessage = document.getElementById('bottle-message');
+const reflectionInput = document.getElementById('reflection-input');
+const cancelBtn = document.getElementById('cancel-btn');
+const submitBtn = document.getElementById('submit-btn');
+const choiceCancelBtn = document.getElementById('choice-cancel-btn');
+const fishForFishBtn = document.getElementById('fish-for-fish');
+const fishForBottlesBtn = document.getElementById('fish-for-bottles');
+const fishForAnythingBtn = document.getElementById('fish-for-anything');
+
+let currentFish = null;
+let currentBottle = null;
+let isModalOpen = false;
+const currentUsername = 'player'; // TODO: Get from auth system
+
+// Modal controls
+function showChoiceModal() {
+  isModalOpen = true;
+  console.log('showChoiceModal: isModalOpen set to', isModalOpen);
+  fishingChoiceModal.style.display = 'flex';
+}
+
+function hideChoiceModal() {
+  fishingChoiceModal.style.display = 'none';
+  isModalOpen = false;
+  console.log('hideChoiceModal: isModalOpen set to', isModalOpen);
+}
+
+function showFishModal(fish) {
+  // Hide choice modal but keep isModalOpen true
+  fishingChoiceModal.style.display = 'none';
+  isModalOpen = true; // Keep modal state active
+  
+  currentFish = fish;
+  currentBottle = null;
+  fishQuestion.textContent = fish.question;
+  fishQuestion.style.display = 'block';
+  bottleContent.style.display = 'none';
+  reflectionInput.placeholder = 'Write your reflection...';
+  reflectionInput.value = '';
+  fishModal.style.display = 'flex';
+  reflectionInput.focus();
+}
+
+function showBottleModal(bottle) {
+  // Hide choice modal but keep isModalOpen true
+  fishingChoiceModal.style.display = 'none';
+  isModalOpen = true; // Keep modal state active
+  
+  currentBottle = bottle;
+  currentFish = null;
+  bottleQuestion.textContent = bottle.question;
+  bottleAuthor.textContent = bottle.username;
+  bottleMessage.textContent = bottle.message;
+  fishQuestion.style.display = 'none';
+  bottleContent.style.display = 'block';
+  reflectionInput.placeholder = 'Write your response...';
+  reflectionInput.value = '';
+  fishModal.style.display = 'flex';
+  reflectionInput.focus();
+}
+
+function hideFishModal() {
+  fishModal.style.display = 'none';
+  isModalOpen = false;
+  currentFish = null;
+  currentBottle = null;
+}
+
+function showMyBottlesModal(bottles) {
+  isModalOpen = true;
+  bottlesList.innerHTML = '';
+  
+  if (!bottles || bottles.length === 0) {
+    bottlesList.innerHTML = '<div style="text-align: center; color: #a0a0a0;">No bottles yet. Go fishing to create some!</div>';
   } else {
-    console.log('(main.js) Fish not loaded yet.');
+    bottles.forEach(bottle => {
+      const bottleDiv = document.createElement('div');
+      bottleDiv.className = 'bottle-item';
+      
+      let responsesHtml = '';
+      if (bottle.responses && bottle.responses.length > 0) {
+        responsesHtml = `
+          <div class="bottle-responses">
+            <strong>Responses (${bottle.responses.length}):</strong>
+            ${bottle.responses.map(resp => `
+              <div class="response-item">
+                <span class="response-author">${resp.username}:</span> ${resp.response}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } else {
+        responsesHtml = '<div class="bottle-responses"><em>No responses yet</em></div>';
+      }
+      
+      bottleDiv.innerHTML = `
+        <div class="bottle-question">${bottle.question}</div>
+        <div class="bottle-message">${bottle.message}</div>
+        ${responsesHtml}
+      `;
+      
+      bottlesList.appendChild(bottleDiv);
+    });
   }
-}, 2000);
+  
+  myBottlesModal.style.display = 'flex';
+}
+
+function hideMyBottlesModal() {
+  myBottlesModal.style.display = 'none';
+  isModalOpen = false;
+}
+
+// Event listeners
+cancelBtn.addEventListener('click', hideFishModal);
+choiceCancelBtn.addEventListener('click', hideChoiceModal);
+bottlesCloseBtn.addEventListener('click', hideMyBottlesModal);
+
+submitBtn.addEventListener('click', async () => {
+  const reflection = reflectionInput.value.trim();
+  if (!reflection) return;
+  
+  try {
+    submitBtn.textContent = 'Casting...';
+    submitBtn.disabled = true;
+    
+    if (currentFish) {
+      await fishingAPI.createBottle(currentFish.id, currentUsername, reflection);
+    } else if (currentBottle) {
+      await fishingAPI.respondToBottle(currentUsername, currentBottle.question_id, reflection);
+    }
+    
+    hideFishModal();
+    console.log('Success!');
+  } catch (error) {
+    console.error('Failed:', error);
+  } finally {
+    submitBtn.textContent = 'Cast into Ocean';
+    submitBtn.disabled = false;
+  }
+});
+
+// Choice button listeners
+fishForFishBtn.addEventListener('click', async () => {
+  hideChoiceModal();
+  try {
+    const fish = await fishingAPI.catchFish(currentUsername);
+    showFishModal(fish);
+  } catch (error) {
+    console.error('Failed to catch fish:', error);
+    isModalOpen = false;
+  }
+});
+
+fishForBottlesBtn.addEventListener('click', async () => {
+  console.log('Fish for bottles clicked');
+  hideChoiceModal();
+  try {
+    console.log('Calling catchBottle API...');
+    const bottle = await fishingAPI.catchBottle(currentUsername);
+    console.log('Received bottle:', bottle);
+    showBottleModal(bottle);
+  } catch (error) {
+    console.error('Failed to catch bottle:', error);
+    alert('Failed to catch bottle: ' + error.message);
+    isModalOpen = false;
+  }
+});
+
+fishForAnythingBtn.addEventListener('click', async () => {
+  hideChoiceModal();
+  try {
+    const random = Math.random() < 0.5;
+    if (random) {
+      const fish = await fishingAPI.catchFish(currentUsername);
+      showFishModal(fish);
+    } else {
+      const bottle = await fishingAPI.catchBottle(currentUsername);
+      showBottleModal(bottle);
+    }
+  } catch (error) {
+    console.error('Failed to catch anything:', error);
+    isModalOpen = false;
+  }
+});
+
+// Fishing interaction
+async function triggerFishing() {
+  // Check if player is near water level
+  const playerY = player.position.y;
+  const distanceToWater = playerY - WATER_LEVEL; // Distance above water level
+  
+  if (distanceToWater > 3) { // Must be within 3 units above water level
+    console.log('Too far from water! Get closer to the shore to fish.');
+    return;
+  }
+  
+  showChoiceModal();
+}
+
+async function showMyBottles() {
+  try {
+    const bottles = await fishingAPI.getUserBottles(currentUsername);
+    showMyBottlesModal(bottles);
+  } catch (error) {
+    console.error('Failed to get bottles:', error);
+  }
+}
+
+// Add F key for fishing
+keys.f = false;
+keys.b = false;
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyF' && !isModalOpen) {
+    keys.f = true;
+    e.preventDefault();
+  }
+  if (e.code === 'KeyB' && !isModalOpen) {
+    keys.b = true;
+    e.preventDefault();
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'KeyF' && !isModalOpen) {
+    keys.f = false;
+    triggerFishing();
+    e.preventDefault();
+  }
+  if (e.code === 'KeyB' && !isModalOpen) {
+    keys.b = false;
+    showMyBottles();
+    e.preventDefault();
+  }
+});
 
 export { scene };

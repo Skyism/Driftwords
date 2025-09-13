@@ -24,6 +24,179 @@
       font-family: monospace;
       z-index: 10;
     }
+
+    #fish-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    #fishing-choice-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    .modal-content {
+      background: rgba(15,17,21,0.95);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 500px;
+      width: 90%;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .choice-title {
+      font-size: 20px;
+      margin-bottom: 16px;
+      text-align: center;
+      color: #e7e7ea;
+    }
+
+    .choice-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .choice-btn {
+      padding: 16px 20px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: #e7e7ea;
+      cursor: pointer;
+      font-size: 16px;
+      transition: all 0.2s;
+    }
+
+    .choice-btn:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.2);
+    }
+
+    #my-bottles-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    .bottles-content {
+      background: rgba(15,17,21,0.95);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 700px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .bottles-title {
+      font-size: 20px;
+      margin-bottom: 20px;
+      text-align: center;
+      color: #e7e7ea;
+    }
+
+    .bottle-item {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .bottle-question {
+      font-weight: bold;
+      color: #9cc1ff;
+      margin-bottom: 8px;
+    }
+
+    .bottle-message {
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+
+    .bottle-responses {
+      border-top: 1px solid rgba(255,255,255,0.1);
+      padding-top: 12px;
+    }
+
+    .response-item {
+      background: rgba(0,0,0,0.2);
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    .response-author {
+      font-weight: bold;
+      color: #a0a0a0;
+    }
+
+    .fish-question {
+      font-size: 18px;
+      margin-bottom: 20px;
+      line-height: 1.5;
+      color: #e7e7ea;
+    }
+
+    .reflection-input {
+      width: 100%;
+      min-height: 120px;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 8px;
+      padding: 12px;
+      color: #e7e7ea;
+      font-family: inherit;
+      font-size: 14px;
+      resize: vertical;
+      margin-bottom: 16px;
+    }
+
+    .modal-buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .btn-primary {
+      background: #4f46e5;
+      color: white;
+    }
+
+    .btn-secondary {
+      background: rgba(255,255,255,0.1);
+      color: #e7e7ea;
+    }
   </style>
 
   <!-- Import map for three.js and its addons -->
@@ -31,8 +204,8 @@
   {
     "imports": {
       "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-  "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.5.11/build/index.module.js"
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.5.11/build/index.module.js"
     }
   }
   </script>
@@ -47,9 +220,69 @@
     <div><strong>Controls</strong></div>
     <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows — move</div>
     <div><kbd>Shift</kbd> — sprint • <kbd>Q</kbd>/<kbd>E</kbd> — rotate view</div>
+    <div><kbd>F</kbd> — fish (when near water)</div>
+    <div><kbd>B</kbd> — my bottles</div>
+  </div>
+
+  <div id="my-bottles-modal">
+    <div class="bottles-content">
+      <div class="bottles-title">My Bottles</div>
+      <div id="bottles-list"></div>
+      <div class="modal-buttons">
+        <button class="btn btn-secondary" id="bottles-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="fishing-choice-modal">
+    <div class="modal-content">
+      <div class="choice-title">What would you like to fish for?</div>
+      <div class="choice-buttons">
+        <button class="choice-btn" id="fish-for-fish">
+          🐟 Fish for Questions
+          <div class="choice-description">Get a prompt to write your own reflection</div>
+        </button>
+        <button class="choice-btn" id="fish-for-bottles">
+          🍾 Fish for Bottles
+          <div class="choice-description">Read someone else's reflection and respond</div>
+        </button>
+        <button class="choice-btn" id="fish-for-anything">
+          🎲 Anything
+          <div class="choice-description">Random chance of getting a question or bottle</div>
+        </button>
+      </div>
+      <div class="modal-buttons">
+        <button class="btn btn-secondary" id="choice-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="fish-modal">
+    <div class="modal-content">
+      <div class="fish-question" id="fish-question"></div>
+      <div id="bottle-content" style="display: none;">
+        <div><strong>Original Question:</strong> <span id="bottle-question"></span></div>
+        <div style="margin: 12px 0;"><strong>Reflection by <span id="bottle-author"></span>:</strong></div>
+        <div id="bottle-message" style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 6px; margin-bottom: 16px;"></div>
+      </div>
+      <textarea class="reflection-input" id="reflection-input" placeholder="Write your reflection..."></textarea>
+      <div class="modal-buttons">
+        <button class="btn btn-secondary" id="cancel-btn">Cancel</button>
+        <button class="btn btn-primary" id="submit-btn">Cast into Ocean</button>
+      </div>
+    </div>
   </div>
   <div id="err"></div>
 
   <div id="player-coords">X: 0, Y: 0, Z: 0</div>
+
+  <!-- === Music (HTML audio) === -->
+    <audio id="bg-music" src="assets/fishing_song.mp3" loop></audio>
+    <script>
+  document.addEventListener('click', () => {
+    const music = document.getElementById('bg-music');
+    music.play();
+  }, { once: true });
+</script>
 </body>
 </html>
