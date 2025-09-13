@@ -41,11 +41,13 @@ const fish_for_fish = async (username) => {
 }
 
 const fish_for_bottles = async (username) => {
+    console.log('fish_for_bottles called with username:', username);
+    
     const { data, error } = await supabase
         .from('bottles')
         .select('*')
-        .limit(30)
-        .or(`fished_by.not.cs.{${username}}, fished_by.is.null`)
+
+    console.log('All bottles query result:', { data, error });
 
     if (error) {
         console.error('Select error:', error)
@@ -53,12 +55,37 @@ const fish_for_bottles = async (username) => {
     }
 
     if (!data || data.length === 0) {
-        console.log('No bottle found')
+        console.log('No bottles found in database')
         return null
     }
 
-    const randomIndex = Math.floor(Math.random() * data.length);
-    const bottle = data[randomIndex];
+    console.log('Found bottles:', data.length);
+    
+    // Filter out user's own bottles
+    const notMyBottles = data.filter(bottle => bottle.username !== username);
+    console.log('Bottles not by user:', notMyBottles.length);
+
+    if (notMyBottles.length === 0) {
+        console.log('No bottles from other users')
+        return null
+    }
+
+    // Filter out bottles already fished by this user
+    const availableBottles = notMyBottles.filter(bottle => {
+        return !bottle.fished_by || !bottle.fished_by.includes(username);
+    });
+
+    console.log('Available bottles after filtering:', availableBottles.length);
+
+    if (availableBottles.length === 0) {
+        console.log('No unfished bottles available')
+        return null
+    }
+
+    const randomIndex = Math.floor(Math.random() * availableBottles.length);
+    const bottle = availableBottles[randomIndex];
+
+    console.log('Selected bottle:', bottle);
 
     const updatedFishedBy = bottle.fished_by 
         ? [...bottle.fished_by, username] 
