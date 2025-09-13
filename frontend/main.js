@@ -365,6 +365,7 @@ catLoader.load(
 
 
 // --- Movement state
+let isModalOpen = false; // ensure modal flag is declared before any handlers
 const keys = { w:false, a:false, s:false, d:false, up:false, left:false, down:false, right:false, shift:false };
 window.addEventListener('keydown', (e) => { setKey(e.code, true); });
 window.addEventListener('keyup',   (e) => { setKey(e.code, false); });
@@ -437,6 +438,10 @@ let currentSpeedMps = 0; // measured world speed (XZ), meters/sec
 prevPlayerPos.copy(player.position);
 
 function animate() {
+  // ensure camera is ready
+  if (typeof activeCamera === 'undefined' || !activeCamera) {
+    setupCameras();
+  }
   const dt = Math.min(clock.getDelta(), 0.05);
 
   if (envMixer) envMixer.update(dt);
@@ -594,11 +599,12 @@ function animate() {
   const camTarget = player.position;
   // hard floor clamp: never allow player to drop below FLOOR_Y
   if (player.position.y < FLOOR_Y) player.position.y = FLOOR_Y;
-  camera.position.copy(camTarget).add(isoOffset);
-  camera.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
-
-  // render
-  renderer.render(scene, camera);
+  // position and orient the active camera
+  if (activeCamera) {
+    activeCamera.position.copy(camTarget).add(isoOffset);
+    activeCamera.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
+    renderer.render(scene, activeCamera);
+  }
   requestAnimationFrame(animate);
 }
 animate();
@@ -641,7 +647,6 @@ const fishForAnythingBtn = document.getElementById('fish-for-anything');
 
 let currentFish = null;
 let currentBottle = null;
-let isModalOpen = false;
 const currentUsername = 'player'; // TODO: Get from auth system
 
 // Modal controls
