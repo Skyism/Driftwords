@@ -103,7 +103,6 @@ export class FishingGame {
       </div>
       <div id="meditation-timer">60s</div>
       <button id="skip-meditation" style="margin-top: 15px; display: none;">Skip (30s+)</button>
-      <button id="test-skip" style="margin-top: 10px; background: #ff4444; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer;">Skip (Testing)</button>
     `;
     
     document.body.appendChild(this.baitUI);
@@ -132,7 +131,6 @@ export class FishingGame {
   setupEventListeners() {
     document.getElementById('cancel-fishing').onclick = () => this.cancel();
     document.getElementById('skip-meditation').onclick = () => this.skipMeditation();
-    document.getElementById('test-skip').onclick = () => this.skipMeditation();
     document.getElementById('fish-option').onclick = () => this.selectType('fish');
     document.getElementById('bottle-option').onclick = () => this.selectType('bottle');
     document.getElementById('back-to-bait').onclick = () => this.backToBait();
@@ -269,13 +267,13 @@ export class FishingGame {
     const questionType = baitToQuestionType[this.selectedBait] || 'personal';
     
     // Use API with question type filtering
-    return await fishingAPI.catchFish('player11', questionType);
+    return await fishingAPI.catchFish('demo_player', questionType);
   }
   
   async catchBottleByBait() {
     // Get bottles from other users
     console.log('Calling catchBottle API...');
-    const bottle = await fishingAPI.catchBottle('player11');
+    const bottle = await fishingAPI.catchBottle('demo_player');
     console.log('API returned bottle:', bottle);
     return bottle;
   }
@@ -306,7 +304,7 @@ export class FishingGame {
   async respondToBottle(bottle, response) {
     try {
       // Use the bottle's question_id to add response
-      await fishingAPI.respondToBottle('player11', bottle.question_id, response);
+      await fishingAPI.respondToBottle('demo_player', bottle.question_id, response);
       console.log('🍾 Your response has been added to this bottle!');
     } catch (error) {
       console.error('Failed to respond to bottle:', error);
@@ -319,7 +317,7 @@ export class FishingGame {
   
   async createBottle(fish, reflection) {
     try {
-      await fishingAPI.createBottle(fish.id, 'player11', reflection);
+      await fishingAPI.createBottle(fish.id, 'demo_player', reflection);
       console.log('🍾 Reflection bottled and cast into the waters!');
     } catch (error) {
       console.error('Failed to create bottle:', error);
