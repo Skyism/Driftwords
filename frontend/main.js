@@ -244,6 +244,11 @@ catLoader.load(
     const CAT_EXTRA_LIFT = 8; // small lift; ground snap handles the rest
     catRoot.position.y += CAT_EXTRA_LIFT;
 
+  // default hand offset for attached rod (tweak these values to fit the rig)
+  // position: x/right, y/up, z/forward relative to bone; rotation in radians
+  window.HAND_OFFSET_POS = new THREE.Vector3(0.08, -0.06, -0.02);
+  window.HAND_OFFSET_ROT = new THREE.Euler(-0.35, 0.2, 0.15);
+
     // parent under player transform so all movement/tilt applies
     player.add(catRoot);
 
@@ -732,7 +737,290 @@ async function triggerFishing() {
     return;
   }
   
-  showChoiceModal();
+  // run the fishing animation sequence (cast, wait, reel) then show result
+  await playFishingSequence();
+}
+
+// --- Fishing visuals & sequence (fancier: rod + visible line + splash + camera nudge)
+async function playFishingSequence() {
+  if (window.__isFishing) return; // prevent multiple simultaneous rods
+  window.__isFishing = true;
+  // create rod (thin cylinder) parented to player
+  const rod = new THREE.Group();
+  // make a simple rod with handle + thin tip
+  const handleGeom = new THREE.CylinderGeometry(0.06, 0.06, 0.6, 8);
+  const handleMat = new THREE.MeshStandardMaterial({ color: 0x5a3b2a, metalness: 0.2, roughness: 0.6 });
+  const handle = new THREE.Mesh(handleGeom, handleMat);
+  handle.rotation.z = Math.PI/2;
+  handle.position.set(0.4, 1.0, 0.6);
+  rod.add(handle);
+  const tipGeom = new THREE.CylinderGeometry(0.015, 0.02, 2.0, 6);
+  const tipMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.7, roughness: 0.25 });
+  const tip = new THREE.Mesh(tipGeom, tipMat);
+  tip.rotation.z = Math.PI/2.6;
+  tip.position.set(0.9, 1.05, 0.6);
+  rod.add(tip);
+
+  // lure
+  const lureGeom = new THREE.SphereGeometry(0.09, 10, 10);
+  const lureMat = new THREE.MeshStandardMaterial({ color: 0xffdd66, emissive: 0xffaa33, emissiveIntensity: 0.6 });
+  const lure = new THREE.Mesh(lureGeom, lureMat);
+  lure.position.set(1.2, 0.6, 0);
+  rod.add(lure);
+
+  // visible curved fishing line (Bezier sampled)
+  const lineMat = new THREE.LineBasicMaterial({ color: 0xe6f7ff, transparent: true, opacity: 0.95, linewidth: 2 });
+  const linePts = new Array(24).fill().map(() => new THREE.Vector3());
+  const lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
+  const line = new THREE.Line(lineGeo, lineMat);
+  scene.add(line);
+
+  // try to attach to the cat's hand bone for a hand-held look
+  let rodParent = player;
+  let foundBone = null;
+  if (catRoot) {
+  // common bone names to try
+  const boneNames = ['RightHand','Hand_R','hand.R','hand_r','Right_Wrist','mixamorigRightHand','rightHand','RightHand_IK'];
+    catRoot.traverse((o) => {
+      if (foundBone) return;
+      if (o.isBone || o.type === 'Bone' || /Bone/i.test(o.type) || o.isObject3D) {
+        if (boneNames.includes(o.name)) foundBone = o;
+      }
+    });
+    // last resort: find first bone-like object with 'hand' in the name
+    if (!foundBone) {
+      catRoot.traverse((o) => { if (!foundBone && /hand/i.test(o.name)) foundBone = o; });
+    }
+    if (foundBone) {
+      rodParent = foundBone;
+      console.log('Attaching rod to bone:', foundBone.name || foundBone.uuid);
+    } else {
+      rodParent = player;
+    }
+  }
+  rodParent.add(rod);
+  // if we attached to a bone (not the player root), apply a small local offset so the rod sits naturally in the paw
+  if (rodParent !== player) {
+    rod.position.set(0.08, -0.06, -0.02); // tuned translation
+    rod.rotation.set(-0.35, 0.2, 0.15);   // tuned rotation (radians)
+    // slightly scale down so it doesn't clip
+    rod.scale.setScalar(0.98);
+  } else {
+    // default placement when parented to player
+    rod.position.set(0,0,0);
+    rod.rotation.set(0,0,0);
+  }
+
+  // compute cast direction: prefer the attached hand bone world forward, then catRoot, then player
+  const dir = new THREE.Vector3();
+  if (foundBone && typeof foundBone.getWorldDirection === 'function') {
+    // use the bone's forward (world) — this aligns to the actual hand orientation
+    foundBone.getWorldDirection(dir);
+    console.log('Casting using hand bone forward:', foundBone.name, dir.x.toFixed(2), dir.y.toFixed(2), dir.z.toFixed(2));
+  } else if (catRoot && typeof catRoot.getWorldDirection === 'function') {
+    catRoot.getWorldDirection(dir);
+  } else {
+    player.getWorldDirection(dir);
+  }
+  dir.y = 0; dir.normalize();
+  const castTarget = player.position.clone().add(dir.multiplyScalar(5.0));
+  castTarget.y = WATER_LEVEL - 0.05;
+
+  const castDuration = 0.6;
+  const waitDuration = 1.8;
+  const reelDuration = 0.9;
+
+  // basic tween that interpolates a world vector
+  function tweenWorld(from, to, dur, onUpdate) {
+    return new Promise((resolve) => {
+      const start = performance.now();
+      function step(now) {
+        const t = Math.min(1, (now - start) / (dur * 1000));
+        const ease = 1 - Math.pow(1 - t, 3);
+        const cur = from.clone().lerp(to, ease);
+        onUpdate(cur, ease);
+        if (t < 1) requestAnimationFrame(step); else resolve();
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  // cast outward
+  const lureStart = lure.getWorldPosition(new THREE.Vector3());
+  await tweenWorld(lureStart, castTarget, castDuration, (pos, p) => {
+    const local = rod.worldToLocal(pos.clone());
+    lure.position.copy(local);
+    // update curved line points
+    const p0 = player.localToWorld(new THREE.Vector3(0.6, 1.05, 0.6));
+    const p1 = lure.getWorldPosition(new THREE.Vector3());
+    // quadratic bezier: control point halfway with slight lift
+    const ctrl = p0.clone().lerp(p1, 0.5).add(new THREE.Vector3(0, 0.5 + 0.8 * p, 0));
+    for (let i=0;i<linePts.length;i++) {
+      const t = i / (linePts.length - 1);
+      const a = p0.clone().multiplyScalar((1-t)*(1-t));
+      const b = ctrl.clone().multiplyScalar(2*(1-t)*t);
+      const c = p1.clone().multiplyScalar(t*t);
+      linePts[i].copy(a.add(b).add(c));
+    }
+    line.geometry.setFromPoints(linePts);
+    line.material.opacity = 0.95 - 0.5 * p;
+    rod.rotation.x = -0.35 * p; // cast angle
+  });
+
+  // splash particles at cast target
+  spawnSplash(castTarget, 12);
+
+  // waiting sparkle
+  const sparkle = setInterval(() => { lure.material.emissiveIntensity = 0.3 + Math.random() * 1.0; lure.scale.setScalar(1.0 + Math.random() * 0.06); }, 90);
+  await new Promise(r => setTimeout(r, waitDuration * 1000));
+  clearInterval(sparkle);
+  lure.material.emissiveIntensity = 0.0;
+  lure.scale.setScalar(1);
+
+  // reel in
+  const reelTargetWorld = player.localToWorld(new THREE.Vector3(0.6, 1.05, 0.6));
+  const lureWorldStart = lure.getWorldPosition(new THREE.Vector3());
+  await tweenWorld(lureWorldStart, reelTargetWorld, reelDuration, (pos, p) => {
+    const local = rod.worldToLocal(pos.clone());
+    lure.position.copy(local);
+    const p0 = player.localToWorld(new THREE.Vector3(0.6, 1.05, 0.6));
+    const p1 = lure.getWorldPosition(new THREE.Vector3());
+    const ctrl = p0.clone().lerp(p1, 0.5).add(new THREE.Vector3(0, 0.5 * (1-p), 0));
+    for (let i=0;i<linePts.length;i++) {
+      const t = i / (linePts.length - 1);
+      const a = p0.clone().multiplyScalar((1-t)*(1-t));
+      const b = ctrl.clone().multiplyScalar(2*(1-t)*t);
+      const c = p1.clone().multiplyScalar(t*t);
+      linePts[i].copy(a.add(b).add(c));
+    }
+    line.geometry.setFromPoints(linePts);
+    rod.rotation.x = -0.35 * (1 - p);
+    // stronger camera shake
+    camera.position.add(new THREE.Vector3((Math.random()-0.5)*0.06 * p, (Math.random()-0.5)*0.03 * p, (Math.random()-0.5)*0.06 * p));
+  });
+
+  // flashy catch effect
+  const flash = new THREE.PointLight(0xffeeaa, 2.6, 10);
+  flash.position.copy(lure.getWorldPosition(new THREE.Vector3()));
+  scene.add(flash);
+  setTimeout(() => scene.remove(flash), 420);
+
+  // small splash at reel-in
+  spawnSplash(reelTargetWorld, 20);
+  // animate rod disappearing (scale down + fade) when reeling completes
+  (function vanishRod(r) {
+    const start = performance.now();
+    const duration = 350;
+    const initialScale = r.scale.clone();
+    const initialMat = [];
+    r.traverse(o => { if (o.isMesh) initialMat.push(o.material); });
+    function step(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const s = 1 - t;
+      r.scale.setScalar(initialScale.x * s);
+      // fade materials
+      initialMat.forEach(m => { if (m && 'opacity' in m) m.opacity = (m.opacity || 1) * s; if (m && m.transparent !== true) m.transparent = true; });
+      if (t < 1) requestAnimationFrame(step); else { if (r.parent) r.parent.remove(r); }
+    }
+    requestAnimationFrame(step);
+  })(rod);
+
+  // cleanup
+  try {
+    // determine catch and show modal once
+    const caughtFish = Math.random() < 0.6;
+    await new Promise(r => setTimeout(r, 200));
+    if (caughtFish) {
+      try {
+        const fish = await fishingAPI.catchFish(currentUsername);
+        showFishModal(fish);
+      } catch (err) {
+        showFishModal({ id: 'local', question: 'A playful fish!', description: 'You caught a local fish.' });
+      }
+    } else {
+      try {
+        const bottle = await fishingAPI.catchBottle(currentUsername);
+        showBottleModal(bottle);
+      } catch (err) {
+        showBottleModal({ question: 'A drift bottle', username: 'mysterious', message: 'A short note...' });
+      }
+    }
+  } finally {
+    // ensure cleanup happens and allow fishing again
+    if (rod.parent) rod.parent.remove(rod);
+    scene.remove(line);
+    window.__isFishing = false;
+  }
+
+}
+
+// spawn a tiny circular splash particle effect at world position
+function spawnSplash(pos, count = 10) {
+  for (let i=0;i<count;i++) {
+    // create a foam sprite at splash position
+    (function spawnFoam() {
+      const size = 0.6 + Math.random() * 1.2;
+      // generate small canvas texture for foam
+      const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath(); ctx.arc(32,32,20,0,Math.PI*2); ctx.fill();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.arc(32,32,10,0,Math.PI*2); ctx.fill();
+      const tex = new THREE.CanvasTexture(c);
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.95 });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set(size, size, 1);
+      sprite.position.copy(pos).add(new THREE.Vector3((Math.random()-0.5)*0.6, 0.015, (Math.random()-0.5)*0.6));
+      scene.add(sprite);
+      const life = 900 + Math.random()*500; const start = performance.now();
+      (function fade() {
+        const t = (performance.now() - start) / life;
+        if (t >= 1) { scene.remove(sprite); tex.dispose(); return; }
+        sprite.material.opacity = 0.95 * (1 - t);
+        requestAnimationFrame(fade);
+      })();
+    })();
+    // main ripple
+    const rippleR = 0.12 + Math.random() * 0.28;
+    const g = new THREE.RingGeometry(rippleR * 0.6, rippleR, 16);
+    const m = new THREE.MeshBasicMaterial({ color: 0xcceeff, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
+    const p = new THREE.Mesh(g, m);
+    p.rotation.x = -Math.PI/2;
+    p.position.copy(pos).add(new THREE.Vector3((Math.random()-0.5)*0.8, 0.01, (Math.random()-0.5)*0.8));
+    p.scale.setScalar(0.8 + Math.random()*1.6);
+    scene.add(p);
+
+    // a few rising droplets
+    const droCount = 1 + Math.floor(Math.random()*3);
+    for (let d=0; d<droCount; d++) {
+      const dg = new THREE.SphereGeometry(0.02 + Math.random()*0.05, 6, 6);
+      const dm = new THREE.MeshStandardMaterial({ color: 0xcfeeff, metalness: 0.1, roughness: 0.6, transparent: true, opacity: 0.95 });
+      const drop = new THREE.Mesh(dg, dm);
+      drop.position.copy(pos).add(new THREE.Vector3((Math.random()-0.5)*0.6, 0.02 + Math.random()*0.08, (Math.random()-0.5)*0.6));
+      scene.add(drop);
+      const life = 600 + Math.random()*400;
+      const start = performance.now();
+      (function animDrop(){
+        const t = (performance.now() - start) / life;
+        if (t >= 1) { scene.remove(drop); return; }
+        drop.position.y += 0.004 + 0.006 * (1 - t);
+        drop.material.opacity = 0.95 * (1 - t);
+        requestAnimationFrame(animDrop);
+      })();
+    }
+
+    // animate ripple expand + fade
+    const lifetime = 700 + Math.random()*400;
+    const start = performance.now();
+    (function animateParticle() {
+      const t = (performance.now() - start) / lifetime;
+      if (t >= 1) { scene.remove(p); return; }
+      p.scale.setScalar(0.8 + t * 2.2);
+      p.material.opacity = 0.95 * (1 - t);
+      requestAnimationFrame(animateParticle);
+    })();
+  }
 }
 
 async function showMyBottles() {
@@ -772,3 +1060,55 @@ window.addEventListener('keyup', (e) => {
 });
 
 export { scene };
+
+// --- Live hand-offset debug UI (sliders)
+// creates a small panel you can toggle with Ctrl+H
+(function createHandOffsetUI(){
+  const panel = document.createElement('div');
+  panel.id = 'hand-offset-panel';
+  panel.style.position = 'fixed';
+  panel.style.right = '12px';
+  panel.style.top = '12px';
+  panel.style.background = 'rgba(0,0,0,0.55)';
+  panel.style.color = '#fff';
+  panel.style.padding = '8px';
+  panel.style.fontFamily = 'sans-serif';
+  panel.style.fontSize = '12px';
+  panel.style.borderRadius = '6px';
+  panel.style.zIndex = 9999;
+  panel.style.maxWidth = '260px';
+  panel.style.display = 'none';
+
+  const title = document.createElement('div'); title.textContent = 'Hand Offset (Ctrl+H)'; title.style.fontWeight='700'; title.style.marginBottom='6px';
+  panel.appendChild(title);
+
+  function addSlider(labelText, min, max, step, getVal, setVal) {
+    const row = document.createElement('div'); row.style.marginBottom='6px';
+    const label = document.createElement('div'); label.textContent = labelText; label.style.marginBottom='2px';
+    const input = document.createElement('input'); input.type='range'; input.min=min; input.max=max; input.step=step; input.value = getVal();
+    const val = document.createElement('span'); val.textContent = Number(getVal()).toFixed(3); val.style.marginLeft='8px';
+    input.addEventListener('input', (e) => { setVal(Number(e.target.value)); val.textContent = Number(e.target.value).toFixed(3); });
+    row.appendChild(label); row.appendChild(input); row.appendChild(val); panel.appendChild(row);
+    return input;
+  }
+
+  // ensure globals exist
+  window.HAND_OFFSET_POS = window.HAND_OFFSET_POS || new THREE.Vector3(0.08, -0.06, -0.02);
+  window.HAND_OFFSET_ROT = window.HAND_OFFSET_ROT || new THREE.Euler(-0.35, 0.2, 0.15);
+
+  addSlider('Pos X', -0.5, 0.5, 0.005, () => window.HAND_OFFSET_POS.x, (v) => window.HAND_OFFSET_POS.x = v);
+  addSlider('Pos Y', -0.5, 0.5, 0.005, () => window.HAND_OFFSET_POS.y, (v) => window.HAND_OFFSET_POS.y = v);
+  addSlider('Pos Z', -0.5, 0.5, 0.005, () => window.HAND_OFFSET_POS.z, (v) => window.HAND_OFFSET_POS.z = v);
+  addSlider('Rot X', -Math.PI, Math.PI, 0.01, () => window.HAND_OFFSET_ROT.x, (v) => window.HAND_OFFSET_ROT.x = v);
+  addSlider('Rot Y', -Math.PI, Math.PI, 0.01, () => window.HAND_OFFSET_ROT.y, (v) => window.HAND_OFFSET_ROT.y = v);
+  addSlider('Rot Z', -Math.PI, Math.PI, 0.01, () => window.HAND_OFFSET_ROT.z, (v) => window.HAND_OFFSET_ROT.z = v);
+
+  document.body.appendChild(panel);
+
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && (e.key === 'h' || e.key === 'H')) {
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      e.preventDefault();
+    }
+  });
+})();
