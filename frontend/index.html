@@ -143,7 +143,7 @@
     // scene.add(water);
 
     // --- Island (top + shoreline rim)
-    const islandRadius = 28;
+    const islandRadius = 100;
 
     // const islandTop = new THREE.Mesh(
     //   new THREE.CircleGeometry(islandRadius, 64),
@@ -284,6 +284,12 @@
         const speed = baseSpeed * (keys.shift ? sprintMult : 1);
         const delta = move.multiplyScalar(speed * dt);
         const next = player.position.clone().add(delta);
+        // Adjust y based on movement direction
+        if (player.position.x < 43 && player.position.z < 10) {
+            if (delta.x > 0 || delta.z > 0) next.y -= Math.abs(delta.x + delta.z) * 0.3;
+            if (delta.x < 0 || delta.z < 0) next.y += Math.abs(delta.x + delta.z) * 0.3;
+        }
+        
 
         // keep player on island
         const len = Math.hypot(next.x, next.z);
