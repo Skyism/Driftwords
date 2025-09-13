@@ -2,9 +2,9 @@ import * as THREE from 'three';
 // import { Water } from 'three/addons/objects/Water.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { loadFishModel, spawnFish, updateFishes, fishes } from './fish.js';
-import { fishingAPI } from './api.js';
 // BVH accelerated raycasting
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
+
 // wire accelerated raycast into three
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
 // expose the compute/dispose helpers on BufferGeometry so we can call geometry.computeBoundsTree()
@@ -117,29 +117,14 @@ debugNormalArrow = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vec
 debugNormalArrow.visible = false;
 scene.add(debugNormalArrow);
 
-// --- Player
+// --- Player group (transforms + physics live here)
 const player = new THREE.Group();
-const body = new THREE.Mesh(
-  new THREE.CapsuleGeometry(0.8, 1.6, 8, 16),
-  new THREE.MeshStandardMaterial({ color: 0x8bb3ff, roughness: 0.5 })
-);
-body.castShadow = true; body.receiveShadow = true;
-body.position.y = 1.5;
-player.add(body);
-
-const nose = new THREE.Mesh(
-  new THREE.ConeGeometry(0.25, 0.6, 12),
-  new THREE.MeshStandardMaterial({ color: 0xffd28b })
-);
-nose.position.set(0, 2.4, 0.9); nose.rotation.x = Math.PI;
-player.add(nose);
-
 player.position.set(0, 2, 0);
 scene.add(player);
 
-// --- Load your glTF model (scene.gltf + scene.bin)
+// --- Load your glTF environment (scene.gltf + scene.bin)
 const loader = new GLTFLoader();
-let mixer = null;
+let envMixer = null;
 
 loader.load(
   'assets/scene.gltf',
@@ -182,14 +167,101 @@ loader.load(
 
     scene.add(root);
 
-    // Play any animations
+    // Play any animations on the environment
     if (gltf.animations?.length) {
-      mixer = new THREE.AnimationMixer(root);
-      gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
+      envMixer = new THREE.AnimationMixer(root);
+      gltf.animations.forEach((clip) => envMixer.clipAction(clip).play());
     }
   },
   undefined,
   (err) => showErr('Model load note: ' + (err?.message || err) + '\nPlace your files at assets/scene.gltf and assets/scene.bin.')
+);
+
+// ----------------- Cat (player avatar) -----------------
+const CAT_PATH = 'assets/cat/scene.gltf'; // put scene.gltf, scene.bin, textures/ under assets/cat/
+const CAT_SCALE = 1.5;                    // adjust if the cat is too big/small
+const CAT_FACES_POS_Z = true;             // flip to false if your cat faces the wrong way
+const WALK_MPS_AT_1X = 1.2;               // world meters/sec that looks right at timeScale=1
+
+let catRoot = null;
+let catMixer = null;
+let catActions = { idle: null, walk: null };
+let activeAction = null;
+
+// small helper: fuzzy clip lookup
+function getClip(gltf, names) {
+  const n = names.map(s => s.toLowerCase());
+  return gltf.animations.find(c => n.some(t => c.name.toLowerCase().includes(t))) || null;
+}
+
+// cross-fade helper
+function fadeTo(action, duration = 0.2) {
+  if (!action || action === activeAction) return;
+  if (activeAction) activeAction.crossFadeTo(action, duration, false);
+  activeAction = action;
+}
+
+const catLoader = new GLTFLoader();
+catLoader.load(
+  CAT_PATH,
+  (gltf) => {
+    catRoot = gltf.scene || gltf.scenes?.[0];
+
+    // shadows
+    catRoot.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }});
+
+    // scale & orientation
+    catRoot.scale.setScalar(CAT_SCALE);
+    if (!CAT_FACES_POS_Z) catRoot.rotation.y = Math.PI; // face +Z for our “forward” math
+
+    // center horizontally; keep feet near y=0
+    const bbox = new THREE.Box3().setFromObject(catRoot);
+    const size = new THREE.Vector3(); bbox.getSize(size);
+    const center = new THREE.Vector3(); bbox.getCenter(center);
+    catRoot.position.x -= center.x;
+    catRoot.position.z -= center.z;
+    catRoot.position.y -= bbox.min.y; // rest feet at y≈0
+
+    const CAT_EXTRA_LIFT = 8; // tweak 0.1–0.5 until it looks right
+    catRoot.position.y += CAT_EXTRA_LIFT;
+
+    // parent under player transform so all movement/tilt applies
+    player.add(catRoot);
+
+    // animations
+    catMixer = new THREE.AnimationMixer(catRoot);
+    const walkClip = getClip(gltf, ['walk', 'walking', 'run', 'move']);
+    const idleClip = getClip(gltf, ['idle', 'stand', 'breath']);
+
+    // OPTIONAL: make walk in-place if clip has root translation
+    // const topName = catRoot.children[0]?.name;
+    // gltf.animations.forEach((clip) => {
+    //   clip.tracks = clip.tracks.filter(t => !(t.name.endsWith('.position') && topName && t.name.startsWith(topName + '.')));
+    // });
+
+    if (walkClip) {
+      catActions.walk = catMixer.clipAction(walkClip);
+      catActions.walk.setLoop(THREE.LoopRepeat, Infinity);
+      catActions.walk.enabled = true;
+      catActions.walk.clampWhenFinished = false;
+      catActions.walk.weight = 0;
+      catActions.walk.play();
+    }
+    if (idleClip) {
+      catActions.idle = catMixer.clipAction(idleClip);
+      catActions.idle.setLoop(THREE.LoopRepeat, Infinity);
+      catActions.idle.enabled = true;
+      catActions.idle.clampWhenFinished = false;
+      catActions.idle.weight = 1;
+      catActions.idle.play();
+      activeAction = catActions.idle;
+    } else {
+      // fallback: if no idle, start on walk but at 0 weight
+      activeAction = catActions.walk || null;
+    }
+  },
+  undefined,
+  (err) => showErr('Cat load failed: ' + (err?.message || err))
 );
 
 // --- Movement state
@@ -204,13 +276,13 @@ function setKey(code, val) {
   if (code === 'KeyE') {
     console.log('E key pressed, isModalOpen:', isModalOpen, 'val:', val);
   }
-  
+
   // Disable all game controls when any modal is open
   if (isModalOpen) {
     console.log('Modal is open, blocking key:', code);
     return;
   }
-  
+
   if (code === 'KeyW') keys.w = val;
   if (code === 'KeyA') keys.a = val;
   if (code === 'KeyS') keys.s = val;
@@ -235,7 +307,7 @@ function setKey(code, val) {
 function rotateIso(angleRad) {
   // Don't rotate camera when any modal is open
   if (isModalOpen) return;
-  
+
   isoOffset.applyAxisAngle(new THREE.Vector3(0,1,0), angleRad);
 }
 
@@ -260,11 +332,17 @@ const baseSpeed = 6;
 const sprintMult = 1.6;
 const clock = new THREE.Clock();
 
+let prevPlayerPos = new THREE.Vector3();
+let currentSpeedMps = 0; // measured world speed (XZ), meters/sec
+prevPlayerPos.copy(player.position);
+
 function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
 
+  if (envMixer) envMixer.update(dt);
+  if (catMixer) catMixer.update(dt);
+
   // if (water.material?.uniforms?.time) water.material.uniforms.time.value += dt;
-  if (mixer) mixer.update(dt);
 
   updateFishes(dt); // ← animate + move all fish
 
@@ -301,8 +379,9 @@ function animate() {
     // BVH-accelerated downward raycast from above candidate XZ to find surface
     raycaster.set(new THREE.Vector3(next.x, next.y + RAY_HEIGHT, next.z), downDir);
     raycaster.far = RAY_HEIGHT * 2;
-  const currentY = player.position.y;
-  const hits = raycaster.intersectObjects(walkableMeshes, true);
+    const currentY = player.position.y;
+    const hits = raycaster.intersectObjects(walkableMeshes, true);
+
     if (debugEnabled) {
       const start = raycaster.ray.origin.clone();
       const end = start.clone().add(raycaster.ray.direction.clone().multiplyScalar(raycaster.far));
@@ -312,6 +391,7 @@ function animate() {
       debugRayLine.visible = false;
       debugNormalArrow.visible = false;
     }
+
     if (hits.length > 0) {
       const hit = hits[0];
       if (debugEnabled) {
@@ -335,9 +415,6 @@ function animate() {
       const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), targetYaw);
       const desiredQuat = surfaceQuat.clone().multiply(yawQuat);
       player.quaternion.slerp(desiredQuat, 1 - Math.exp(-ROT_DAMP * dt));
-
-      // subtle bob
-      body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
     } else {
       // No hit: allow movement toward beach — damp Y toward a beach fallback level so player can reach shore
       const beachY = WATER_LEVEL + STAND_OFFSET;
@@ -347,10 +424,29 @@ function animate() {
       // keep facing movement direction
       const targetYaw = Math.atan2(delta.x, delta.z);
       player.rotation.y = THREE.MathUtils.damp(player.rotation.y, targetYaw, 8, dt);
-      body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
     }
-  } else {
-    body.position.y = THREE.MathUtils.damp(body.position.y, 1.6, 6, dt);
+  }
+
+  // === After player.position has been updated for this frame ===
+  // measure actual horizontal speed to drive animation
+  const dx = player.position.x - prevPlayerPos.x;
+  const dz = player.position.z - prevPlayerPos.z;
+  const dist = Math.hypot(dx, dz);
+  currentSpeedMps = dist / Math.max(dt, 1e-6);  // meters/second in world units
+  prevPlayerPos.copy(player.position);
+
+  // animation state machine: Idle <-> Walk
+  if (catMixer && (catActions.idle || catActions.walk)) {
+    const MOVING = currentSpeedMps > 0.05; // deadzone to avoid jitter
+    if (MOVING && catActions.walk) {
+      // normalize timeScale so feet match ground speed
+      const tScale = THREE.MathUtils.clamp(currentSpeedMps / WALK_MPS_AT_1X, 0.1, 3.5);
+      catActions.walk.timeScale = tScale;
+      fadeTo(catActions.walk, 0.12);
+    } else if (!MOVING && catActions.idle) {
+      catActions.idle.timeScale = 1;
+      fadeTo(catActions.idle, 0.15);
+    }
   }
 
   // camera follow at isometric offset
