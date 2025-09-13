@@ -76,7 +76,7 @@ scene.add(ambient);
 // scene.add(water);
 
 // --- Island radius guard (if you’re keeping the circle island)
-const islandRadius = 60;
+const islandRadius = 120;
 
 // --- Player
 const player = new THREE.Group();
@@ -242,3 +242,5 @@ function updateCoords() {
   coordsDisplay.textContent = `X: ${pos.x.toFixed(2)}, Y: ${pos.y.toFixed(2)}, Z: ${pos.z.toFixed(2)}`;
 }
 setInterval(updateCoords, 100); // update every 100ms
+
+export { scene };
