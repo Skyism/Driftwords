@@ -201,6 +201,13 @@ function fadeTo(action, duration = 0.2) {
   activeAction = action;
 }
 
+// helper + play-state flag (place near your other top-level vars)
+let walkPlaying = false;
+function anyMoveKeyDown() {
+  return keys.w || keys.a || keys.s || keys.d ||
+         keys.up || keys.left || keys.down || keys.right;
+}
+
 const catLoader = new GLTFLoader();
 catLoader.load(
   CAT_PATH,
@@ -222,47 +229,34 @@ catLoader.load(
     catRoot.position.z -= center.z;
     catRoot.position.y -= bbox.min.y; // rest feet at y≈0
 
-    const CAT_EXTRA_LIFT = 8; // tweak 0.1–0.5 until it looks right
+    const CAT_EXTRA_LIFT = 8; // small lift; ground snap handles the rest
     catRoot.position.y += CAT_EXTRA_LIFT;
 
     // parent under player transform so all movement/tilt applies
     player.add(catRoot);
 
-    // animations
+    // --- Animations: name-agnostic, play only when move keys are down ---
     catMixer = new THREE.AnimationMixer(catRoot);
-    const walkClip = getClip(gltf, ['walk', 'walking', 'run', 'move']);
-    const idleClip = getClip(gltf, ['idle', 'stand', 'breath']);
 
-    // OPTIONAL: make walk in-place if clip has root translation
-    // const topName = catRoot.children[0]?.name;
-    // gltf.animations.forEach((clip) => {
-    //   clip.tracks = clip.tracks.filter(t => !(t.name.endsWith('.position') && topName && t.name.startsWith(topName + '.')));
-    // });
+    // choose the longest clip as our "walk" clip
+    if (gltf.animations && gltf.animations.length) {
+      const primaryClip =
+        gltf.animations.reduce((best, c) =>
+          (!best || c.duration > best.duration) ? c : best, null);
 
-    if (walkClip) {
-      catActions.walk = catMixer.clipAction(walkClip);
+      catActions = catActions || {};
+      catActions.walk = catMixer.clipAction(primaryClip);
       catActions.walk.setLoop(THREE.LoopRepeat, Infinity);
-      catActions.walk.enabled = true;
       catActions.walk.clampWhenFinished = false;
-      catActions.walk.weight = 0;
-      catActions.walk.play();
-    }
-    if (idleClip) {
-      catActions.idle = catMixer.clipAction(idleClip);
-      catActions.idle.setLoop(THREE.LoopRepeat, Infinity);
-      catActions.idle.enabled = true;
-      catActions.idle.clampWhenFinished = false;
-      catActions.idle.weight = 1;
-      catActions.idle.play();
-      activeAction = catActions.idle;
+      // do NOT play here — we’ll start/stop in animate() based on key state
     } else {
-      // fallback: if no idle, start on walk but at 0 weight
-      activeAction = catActions.walk || null;
+      console.warn('Cat model has no animations.');
     }
   },
   undefined,
   (err) => showErr('Cat load failed: ' + (err?.message || err))
 );
+
 
 // --- Movement state
 const keys = { w:false, a:false, s:false, d:false, up:false, left:false, down:false, right:false, shift:false };
@@ -345,6 +339,25 @@ function animate() {
   // if (water.material?.uniforms?.time) water.material.uniforms.time.value += dt;
 
   updateFishes(dt); // ← animate + move all fish
+
+  // after you compute currentSpeedMps, inside animate():
+  if (catMixer && catActions?.walk) {
+  const MOVING_KEYS = anyMoveKeyDown();
+    if (MOVING_KEYS) {
+      if (!walkPlaying) {
+        catActions.walk.reset().play();
+        walkPlaying = true;
+      }
+    // optional: sync foot speed to world speed
+      catActions.walk.timeScale = THREE.MathUtils.clamp(
+      currentSpeedMps / WALK_MPS_AT_1X, 0.1, 3.5
+    );
+    } else if (walkPlaying) {
+      catActions.walk.stop();
+      walkPlaying = false;
+    }
+  }
+
 
   // movement (relative to camera iso orientation)
   // forward should point from camera toward the scene center (negated isoOffset)
