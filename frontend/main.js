@@ -107,7 +107,7 @@ function lerpAngle(a, b, t) {
 }
 
 // Call this once after scene loads (right after setupCameras) if you want a different start:
-function beginIntro({ x=-30, y=-7.5, z=-10, yawDeg=25, durationMs=2500 } = {}) {
+function beginIntro({ x=-30, y=7.5, z=-10, yawDeg=25, durationMs=2500 } = {}) {
   intro.active = true;
   intro.t = 0;
   intro.dur = durationMs;
@@ -124,7 +124,7 @@ beginIntro({ x: -30, y: 8, z: -10, yawDeg: 35, durationMs: 2200 });
 
 
 // --- Initialize Fishing Game
-const fishingGame = new FishingGame(scene, camera);
+const fishingGame = new FishingGame(scene, activeCamera);
 
 // --- Lights
 const hemi = new THREE.HemisphereLight(0xbfdfff, 0x4b5a3a, 0.65);
@@ -583,8 +583,6 @@ function animate() {
 
     perspCam.position.copy(curPos);
     perspCam.lookAt(look);
-    const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), curYaw);
-    perspCam.quaternion.slerp(yawQuat, 0.15);
     perspCam.fov = curFov;
     perspCam.updateProjectionMatrix();
 
@@ -600,6 +598,7 @@ function animate() {
       // Switch with no visible jump (views are already identical)
       activeCamera = orthoCam;
       intro.active = false;
+      fishingGame.setCamera?.(activeCamera);
     }
   } else {
     // ---- NORMAL ORTHO FOLLOW ----
