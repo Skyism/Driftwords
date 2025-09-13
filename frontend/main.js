@@ -34,33 +34,94 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 app.appendChild(renderer.domElement);
 
 // --- Camera (orthographic, isometric)
-let camera;
-const frustumSize = 50; // bigger = more zoomed out
-let isoOffset = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(30); // ≈ isometric
+// --- Cameras (perspective intro -> orthographic isometric)
+let orthoCam, perspCam, activeCamera;
+const frustumSize = 50; // Ortho size (bigger = more zoomed out)
+let isoOffset = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(30);
+// Current visible height the ortho camera uses (animates after handoff)
+let orthoVisibleHeight = frustumSize;
 
-function setupCamera() {
+// Keep ortho frustum in sync with a desired visible height
+function setOrthoFrustumByHeight(cam, visibleHeight) {
   const aspect = window.innerWidth / window.innerHeight;
-  const halfW = (frustumSize * aspect) / 2;
-  const halfH = frustumSize / 2;
-
-  const NEAR = 0.01;   // lower clip distance (see closer)
-  const FAR  = 500;    // clip sooner in the distance (optional)
-
-  if (!camera) {
-    camera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, NEAR, FAR);
-    camera.position.set(0, 1.2, 3.6);
-    camera.lookAt(0, 0, 0);
-  } else {
-    camera.left = -halfW;
-    camera.right = halfW;
-    camera.top = halfH;
-    camera.bottom = -halfH;
-    camera.near = NEAR;   // <-- update near
-    camera.far = FAR;     // <-- update far
-    camera.updateProjectionMatrix();
-  }
+  const halfH = visibleHeight / 2;
+  const halfW = halfH * aspect;
+  cam.left = -halfW; cam.right = halfW;
+  cam.top =  halfH;  cam.bottom = -halfH;
+  cam.updateProjectionMatrix();
 }
-setupCamera();
+
+// Make ortho camera show exactly what the perspective camera shows (same framing)
+function matchOrthoToPerspective(pCam, oCam, target) {
+  // world-space distance from cam to look target
+  const dist = pCam.position.distanceTo(target);
+  const visH = 2 * dist * Math.tan(THREE.MathUtils.degToRad(pCam.fov * 0.5));
+  setOrthoFrustumByHeight(oCam, visH);
+  oCam.position.copy(pCam.position);
+  oCam.quaternion.copy(pCam.quaternion);
+  return visH; // we’ll use this as the starting orthoVisibleHeight
+}
+
+function setupCameras() {
+  const aspect = window.innerWidth / window.innerHeight;
+
+  // --- Ortho camera (final)
+  if (!orthoCam) {
+    // Create once; we’ll size it by visible height
+    orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 500);
+  }
+  setOrthoFrustumByHeight(orthoCam, orthoVisibleHeight);
+
+  // --- Perspective camera (intro)
+  if (!perspCam) {
+    perspCam = new THREE.PerspectiveCamera(50, aspect, 0.01, 500);
+  } else {
+    perspCam.aspect = aspect;
+    perspCam.updateProjectionMatrix();
+  }
+
+  // start from the intro cam
+  if (!activeCamera) activeCamera = perspCam;
+}
+
+setupCameras();
+
+// -------- Intro tween state --------
+const intro = {
+  active: true,
+  t: 0,
+  dur: 2500, // ms (change to taste)
+  startPos: new THREE.Vector3(-30, 8, -20), // <- your custom start (x,y,z)
+  startYawRad: THREE.MathUtils.degToRad(25), // <- your start yaw in degrees
+  endPos: new THREE.Vector3(),  // computed on the fly each frame (follows player+iso)
+  endYawRad: 0,                 // computed each frame to face the player from iso
+  startFov: 60,
+  endFov: 24
+};
+
+// Helper: ease and angle lerp
+function easeInOutCubic(u){ return u<0.5 ? 4*u*u*u : 1 - Math.pow(-2*u+2,3)/2; }
+function lerpAngle(a, b, t) {
+  let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
+  return a + d * t;
+}
+
+// Call this once after scene loads (right after setupCameras) if you want a different start:
+function beginIntro({ x=-30, y=-7.5, z=-10, yawDeg=25, durationMs=2500 } = {}) {
+  intro.active = true;
+  intro.t = 0;
+  intro.dur = durationMs;
+  intro.startPos.set(x, y, z);
+  intro.startYawRad = THREE.MathUtils.degToRad(yawDeg);
+  perspCam.position.copy(intro.startPos);
+  perspCam.fov = intro.startFov;
+  perspCam.updateProjectionMatrix();
+  activeCamera = perspCam;
+}
+
+// Example: set a very specific starting pose (edit these numbers)
+beginIntro({ x: -30, y: 8, z: -10, yawDeg: 35, durationMs: 2200 });
+
 
 // --- Initialize Fishing Game
 const fishingGame = new FishingGame(scene, camera);
@@ -136,7 +197,7 @@ scene.add(debugNormalArrow);
 
 // --- Player group (transforms + physics live here)
 const player = new THREE.Group();
-player.position.set(0, 2, 0);
+player.position.set(-30, 7.5, -20);
 scene.add(player);
 
 // --- Load your glTF environment (scene.gltf + scene.bin)
@@ -501,22 +562,62 @@ function animate() {
     }
   }
 
-  // camera follow at isometric offset
+  // camera follow at isometric offset (final target for ortho)
   const camTarget = player.position;
-  // hard floor clamp: never allow player to drop below FLOOR_Y
-  if (player.position.y < FLOOR_Y) player.position.y = FLOOR_Y;
-  camera.position.copy(camTarget).add(isoOffset);
-  camera.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
 
-  // render
-  renderer.render(scene, camera);
+  // ---- INTRO TWEEN (perspective) ----
+  if (intro.active) {
+    intro.t += dt * 1000;
+    const u = THREE.MathUtils.clamp(intro.t / intro.dur, 0, 1);
+    const e = easeInOutCubic(u);
+
+    const look = new THREE.Vector3(camTarget.x, camTarget.y + 1.4, camTarget.z);
+    const desiredEndPos = new THREE.Vector3().copy(camTarget).add(isoOffset);
+
+    // Tween pos + yaw + FOV
+    const curPos = new THREE.Vector3().lerpVectors(intro.startPos, desiredEndPos, e);
+    const dir = new THREE.Vector3().subVectors(camTarget, desiredEndPos).setY(0);
+    const endYaw = Math.atan2(dir.x, dir.z);
+    const curYaw = lerpAngle(intro.startYawRad, endYaw, e);
+    const curFov = THREE.MathUtils.lerp(intro.startFov, intro.endFov, e);
+
+    perspCam.position.copy(curPos);
+    perspCam.lookAt(look);
+    const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), curYaw);
+    perspCam.quaternion.slerp(yawQuat, 0.15);
+    perspCam.fov = curFov;
+    perspCam.updateProjectionMatrix();
+
+    // Start aligning the ortho camera to the perspective view for a seamless swap
+    const handoffStart = 0.85;   // begin matching frustum for last ~15%
+    if (u >= handoffStart) {
+      // Continuously match ortho to what perspective shows *this frame*
+      const matchedHeight = matchOrthoToPerspective(perspCam, orthoCam, look);
+      orthoVisibleHeight = matchedHeight; // remember this so we can ease from it later
+    }
+
+    if (u >= 0.999) {
+      // Switch with no visible jump (views are already identical)
+      activeCamera = orthoCam;
+      intro.active = false;
+    }
+  } else {
+    // ---- NORMAL ORTHO FOLLOW ----
+    // Smoothly ease ortho zoom back to your standard frustumSize
+    orthoVisibleHeight = THREE.MathUtils.damp(orthoVisibleHeight, frustumSize, 3.5, dt);
+    setOrthoFrustumByHeight(orthoCam, orthoVisibleHeight);
+
+    orthoCam.position.copy(camTarget).add(isoOffset);
+    orthoCam.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
+  }
+  renderer.render(scene, activeCamera);
   requestAnimationFrame(animate);
 }
 animate();
 
 // --- Resize
 window.addEventListener('resize', () => {
-  setupCamera();
+  setupCameras();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
