@@ -688,7 +688,7 @@ const fishForAnythingBtn = document.getElementById('fish-for-anything');
 let currentFish = null;
 let currentBottle = null;
 let isModalOpen = false;
-const currentUsername = 'player'; // TODO: Get from auth system
+const currentUsername = 'player11'; // TODO: Get from auth system
 
 // Modal controls
 function showChoiceModal() {

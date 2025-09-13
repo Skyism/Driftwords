@@ -269,13 +269,13 @@ export class FishingGame {
     const questionType = baitToQuestionType[this.selectedBait] || 'personal';
     
     // Use API with question type filtering
-    return await fishingAPI.catchFish('player', questionType);
+    return await fishingAPI.catchFish('player11', questionType);
   }
   
   async catchBottleByBait() {
     // Get bottles from other users
     console.log('Calling catchBottle API...');
-    const bottle = await fishingAPI.catchBottle('player');
+    const bottle = await fishingAPI.catchBottle('player11');
     console.log('API returned bottle:', bottle);
     return bottle;
   }
@@ -306,7 +306,7 @@ export class FishingGame {
   async respondToBottle(bottle, response) {
     try {
       // Use the bottle's question_id to add response
-      await fishingAPI.respondToBottle('player', bottle.question_id, response);
+      await fishingAPI.respondToBottle('player11', bottle.question_id, response);
       console.log('🍾 Your response has been added to this bottle!');
     } catch (error) {
       console.error('Failed to respond to bottle:', error);
@@ -319,7 +319,7 @@ export class FishingGame {
   
   async createBottle(fish, reflection) {
     try {
-      await fishingAPI.createBottle(fish.id, 'player', reflection);
+      await fishingAPI.createBottle(fish.id, 'player11', reflection);
       console.log('🍾 Reflection bottled and cast into the waters!');
     } catch (error) {
       console.error('Failed to create bottle:', error);
