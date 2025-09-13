@@ -39,10 +39,21 @@ function setupCamera() {
   const aspect = window.innerWidth / window.innerHeight;
   const halfW = (frustumSize * aspect) / 2;
   const halfH = frustumSize / 2;
+
+  const NEAR = 0.01;   // lower clip distance (see closer)
+  const FAR  = 500;    // clip sooner in the distance (optional)
+
   if (!camera) {
-    camera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 0.1, 2000);
+    camera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, NEAR, FAR);
+    camera.position.set(0, 1.2, 3.6);
+    camera.lookAt(0, 0, 0);
   } else {
-    camera.left = -halfW; camera.right = halfW; camera.top = halfH; camera.bottom = -halfH;
+    camera.left = -halfW;
+    camera.right = halfW;
+    camera.top = halfH;
+    camera.bottom = -halfH;
+    camera.near = NEAR;   // <-- update near
+    camera.far = FAR;     // <-- update far
     camera.updateProjectionMatrix();
   }
 }
