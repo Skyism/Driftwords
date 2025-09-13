@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 // import { Water } from 'three/addons/objects/Water.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { fishRef } from './load_model.js';
+// BVH accelerated raycasting
+import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
+// wire accelerated raycast into three
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 // --- Simple error surface
 const errBox = document.getElementById('err');
@@ -76,7 +81,25 @@ scene.add(ambient);
 // scene.add(water);
 
 // --- Island radius guard (if you’re keeping the circle island)
-const islandRadius = 120;
+const islandRadius = 60;
+
+// --- BVH + movement tuning
+const RAY_HEIGHT = 12; // how high above candidate position to cast downward
+const WATER_LEVEL = -1.0; // y below which is considered water/void and not walkable
+const STAND_OFFSET = 0.12; // how high above the hit point the player stands
+const SNAP_DAMP = 12; // damping for vertical snap (larger = snappier)
+const ROT_DAMP = 8; // damping for rotation alignment to surface normal
+
+// Walkable meshes populated at load time
+const walkableMeshes = [];
+// Raycaster & helpers
+const downDir = new THREE.Vector3(0, -1, 0);
+const raycaster = new THREE.Raycaster();
+
+// Debug helpers
+let debugEnabled = false;
+let debugRayLine = null;
+let debugNormalArrow = null;
 
 // --- Player
 const player = new THREE.Group();
@@ -242,5 +265,13 @@ function updateCoords() {
   coordsDisplay.textContent = `X: ${pos.x.toFixed(2)}, Y: ${pos.y.toFixed(2)}, Z: ${pos.z.toFixed(2)}`;
 }
 setInterval(updateCoords, 100); // update every 100ms
+
+setInterval(() => {
+  if (fishRef) {
+    console.log(`(main.js) Fish position: X=${fishRef.position.x.toFixed(2)}, Y=${fishRef.position.y.toFixed(2)}, Z=${fishRef.position.z.toFixed(2)}`);
+  } else {
+    console.log('(main.js) Fish not loaded yet.');
+  }
+}, 2000);
 
 export { scene };
