@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Isometric Island • three.js</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #0f1115; color: #e7e7ea; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    #app { position: fixed; inset: 0; }
+    .hud { position: fixed; left: 16px; bottom: 16px; padding: 10px 12px; background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); user-select: none; font-size: 14px; line-height: 1.4; }
+    .hud kbd { background: #181a20; border: 1px solid #2a2e36; border-bottom-width: 2px; border-radius: 6px; padding: 2px 6px; margin: 0 2px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .top { position: fixed; left: 16px; top: 16px; padding: 8px 10px; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.08); border-radius: 10px; font-size: 12px; }
+    a { color: #9cc1ff; text-decoration: none; }
+    #err { position: fixed; left: 12px; right: 12px; bottom: 12px; padding: 10px 12px; background: rgba(220,0,0,.15); border: 1px solid rgba(220,0,0,.35); border-radius: 10px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; display:none; }
+
+    /* Add this style for the coordinates display */
+    #player-coords {
+      position: absolute;
+      top: 20px;
+      right: 30px;
+      color: #fff;
+      background: rgba(0,0,0,0.5);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-family: monospace;
+      z-index: 10;
+    }
+  </style>
+
+  <!-- Import map for three.js and its addons -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <div class="top">three.js isometric island • <a href="https://threejs.org/docs" target="_blank" rel="noreferrer">docs</a></div>
+  <div class="hud">
+    <div><strong>Controls</strong></div>
+    <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows — move</div>
+    <div><kbd>Shift</kbd> — sprint • <kbd>Q</kbd>/<kbd>E</kbd> — rotate view</div>
+  </div>
+  <div id="err"></div>
+
+  <!-- Add this div for displaying player coordinates -->
+  <div id="player-coords">
+    X: 0, Y: 0, Z: 0
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    // import { Water } from 'three/addons/objects/Water.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    // If your model uses Draco compression, also import DRACOLoader and wire it up.
+
+    // --- Simple error surface
+    const errBox = document.getElementById('err');
+    const showErr = (msg) => { errBox.style.display='block'; errBox.textContent = msg; };
+    window.addEventListener('error', (e) => showErr('Error: ' + e.message));
+    window.addEventListener('unhandledrejection', (e) => showErr('Promise rejection: ' + (e.reason?.message || e.reason)));
+
+    // --- Basic setup
+    const app = document.getElementById('app');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87c8ff); // sunny sky
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    app.appendChild(renderer.domElement);
+
+    // --- Camera (orthographic, isometric)
+    let camera;
+    const frustumSize = 50; // bigger = more zoomed out
+    let isoOffset = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(30); // 35.264° pitch, 45° yaw feel
+
+    function setupCamera() {
+      const aspect = window.innerWidth / window.innerHeight;
+      const halfW = (frustumSize * aspect) / 2;
+      const halfH = frustumSize / 2;
+      if (!camera) {
+        camera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 0.1, 2000);
+      } else {
+        camera.left = -halfW; camera.right = halfW; camera.top = halfH; camera.bottom = -halfH;
+        camera.updateProjectionMatrix();
+      }
+    }
+    setupCamera();
+
+    // --- Lights (sunny)
+    const hemi = new THREE.HemisphereLight(0xbfdfff, 0x4b5a3a, 0.65); // sky & ground tint
+    scene.add(hemi);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.25); // sun
+    dirLight.position.set(40, 80, 30);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.shadow.camera.near = 1;
+    dirLight.shadow.camera.far = 200;
+    dirLight.shadow.camera.left = -60;
+    dirLight.shadow.camera.right = 60;
+    dirLight.shadow.camera.top = 60;
+    dirLight.shadow.camera.bottom = -60;
+    scene.add(dirLight);
+
+    // Add a bright directional light to simulate sunlight
+    const sunLight = new THREE.DirectionalLight(0xFFBBB0, 2); // white, intensity 2
+    sunLight.position.set(10, 20, 10); // position above the scene
+    sunLight.castShadow = true; // enable shadows if needed
+    scene.add(sunLight);
+
+    // Optionally, add ambient light for softer shadows
+    const ambient = new THREE.AmbientLight(0xffffff, 0.5); // soft white light
+    scene.add(ambient);
+
+    // --- Water (surrounds island)
+    // const waterNormals = new THREE.TextureLoader().load(
+    //   'three/addons/textures/waternormals.jpg',
+    //   (tex) => { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; }
+    // );
+    // const water = new Water(
+    //   new THREE.PlaneGeometry(400, 400),
+    //   {
+    //     textureWidth: 512,
+    //     textureHeight: 512,
+    //     waterNormals,
+    //     sunDirection: dirLight.position.clone().normalize(),
+    //     sunColor: 0xffffff,
+    //     waterColor: 0x4aa3f0,
+    //     distortionScale: 2.2,
+    //     fog: false
+    //   }
+    // );
+    // water.rotation.x = -Math.PI / 2;
+    // water.position.y = -0.04; // just below island surface
+    // scene.add(water);
+
+    // --- Island (top + shoreline rim)
+    const islandRadius = 28;
+
+    // const islandTop = new THREE.Mesh(
+    //   new THREE.CircleGeometry(islandRadius, 64),
+    //   new THREE.MeshStandardMaterial({ color: 0x6aa85b, roughness: 1.0, metalness: 0.0 })
+    // );
+    // islandTop.rotation.x = -Math.PI / 2;
+    // islandTop.receiveShadow = true;
+    // scene.add(islandTop);
+
+    // const shore = new THREE.Mesh(
+    //   new THREE.CylinderGeometry(islandRadius + 0.6, islandRadius + 2.0, 1.2, 64, 1, true),
+    //   new THREE.MeshStandardMaterial({ color: 0xe6c98c, roughness: 1.0, metalness: 0.0, side: THREE.DoubleSide })
+    // );
+    // shore.position.y = -0.6;
+    // shore.receiveShadow = true;
+    // scene.add(shore);
+
+    // --- Player
+    const player = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.8, 1.6, 8, 16),
+      new THREE.MeshStandardMaterial({ color: 0x8bb3ff, roughness: 0.5 })
+    );
+    body.castShadow = true; body.receiveShadow = true;
+    body.position.y = 1.5;
+    player.add(body);
+
+    const nose = new THREE.Mesh(
+      new THREE.ConeGeometry(0.25, 0.6, 12),
+      new THREE.MeshStandardMaterial({ color: 0xffd28b })
+    );
+    nose.position.set(0, 2.4, 0.9); nose.rotation.x = Math.PI;
+    player.add(nose);
+
+    player.position.set(0, 2, 0);
+    scene.add(player);
+
+    // --- Optional: load your glTF model (scene.gltf + scene.bin)
+    // Place files at: public/assets/scene.gltf and public/assets/scene.bin (or adjust the path below)
+    const loader = new GLTFLoader();
+    loader.load(
+      'assets/scene.gltf',
+      (gltf) => {
+        const root = gltf.scene;
+        root.traverse((o) => {
+          if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+        });
+
+        // Center & scale to fit island
+        const box = new THREE.Box3().setFromObject(root);
+        const size = new THREE.Vector3(); box.getSize(size);
+        const center = new THREE.Vector3(); box.getCenter(center);
+        root.position.sub(center);
+        const targetSize = 1000;
+        const s = targetSize / Math.max(size.x || 1, size.z || 1);
+        root.scale.setScalar(s);
+        root.position.y = -5;
+        root.position.z = -15;
+        root.position.x = -5;
+        scene.add(root);
+
+        // Play any animations
+        if (gltf.animations?.length) {
+          mixer = new THREE.AnimationMixer(root);
+          gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
+        }
+      },
+      undefined,
+      (err) => {
+        // Not fatal—just show a hint if files are missing
+        showErr('Model load note: ' + (err?.message || err) + '\nPlace your files at assets/scene.gltf and assets/scene.bin.');
+      }
+    );
+
+    // --- Simple props on island
+    // const obstacles = new THREE.Group();
+    // const boxGeo = new THREE.BoxGeometry(3.5, 3.5, 3.5);
+    // for (let i = 0; i < 8; i++) {
+    //   const m = new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(Math.random(), 0.35, 0.55) });
+    //   const b = new THREE.Mesh(boxGeo, m);
+    //   const t = Math.random() * Math.PI * 2;
+    //   const r = Math.sqrt(Math.random()) * (islandRadius - 5);
+    //   b.position.set(Math.cos(t) * r, 1.75, Math.sin(t) * r);
+    //   b.castShadow = true; b.receiveShadow = true;
+    //   obstacles.add(b);
+    // }
+    // scene.add(obstacles);
+
+    // --- Movement state
+    const keys = { w:false, a:false, s:false, d:false, up:false, left:false, down:false, right:false, shift:false };
+    window.addEventListener('keydown', (e) => { setKey(e.code, true); });
+    window.addEventListener('keyup',   (e) => { setKey(e.code, false); });
+
+    function setKey(code, val) {
+      if (code === 'KeyW') keys.w = val; if (code === 'KeyA') keys.a = val; if (code === 'KeyS') keys.s = val; if (code === 'KeyD') keys.d = val;
+      if (code === 'ArrowUp') keys.up = val; if (code === 'ArrowLeft') keys.left = val; if (code === 'ArrowDown') keys.down = val; if (code === 'ArrowRight') keys.right = val;
+      if (code === 'ShiftLeft' || code === 'ShiftRight') keys.shift = val;
+      if (!val) return;
+      if (code === 'KeyQ') rotateIso(-Math.PI/2);
+      if (code === 'KeyE') rotateIso( Math.PI/2);
+    }
+
+    function rotateIso(angleRad) {
+      isoOffset.applyAxisAngle(new THREE.Vector3(0,1,0), angleRad);
+    }
+
+    // --- Loop
+    const baseSpeed = 6;
+    const sprintMult = 1.6;
+    const clock = new THREE.Clock();
+    let mixer = null;
+
+    function animate() {
+      const dt = Math.min(clock.getDelta(), 0.05);
+
+      // water animation
+      // if (water.material?.uniforms?.time) water.material.uniforms.time.value += dt;
+
+      // glTF animations
+      if (mixer) mixer.update(dt);
+
+      // movement (relative to camera iso orientation)
+      const forward = new THREE.Vector3().copy(isoOffset).setY(0).normalize();
+      const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0,1,0)).negate();
+
+      let move = new THREE.Vector3();
+      const pressUp    = keys.w || keys.up;
+      const pressDown  = keys.s || keys.down;
+      const pressLeft  = keys.a || keys.left;
+      const pressRight = keys.d || keys.right;
+      if (pressUp)    move.add(forward);
+      if (pressDown)  move.add(forward.clone().negate());
+      if (pressRight) move.add(right);
+      if (pressLeft)  move.add(right.clone().negate());
+
+      if (move.lengthSq() > 0) {
+        move.normalize();
+        const speed = baseSpeed * (keys.shift ? sprintMult : 1);
+        const delta = move.multiplyScalar(speed * dt);
+        const next = player.position.clone().add(delta);
+
+        // keep player on island
+        const len = Math.hypot(next.x, next.z);
+        const maxLen = islandRadius - 0.8;
+        if (len > maxLen) {
+          const ang = Math.atan2(next.z, next.x);
+          next.x = Math.cos(ang) * maxLen;
+          next.z = Math.sin(ang) * maxLen;
+        }
+        player.position.copy(next);
+
+        // face movement direction smoothly
+        const targetYaw = Math.atan2(delta.x, delta.z);
+        player.rotation.y = THREE.MathUtils.damp(player.rotation.y, targetYaw, 8, dt);
+
+        // subtle bob
+        body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
+      } else {
+        body.position.y = THREE.MathUtils.damp(body.position.y, 1.6, 6, dt);
+      }
+
+      // camera follow at isometric offset
+      const camTarget = player.position;
+      camera.position.copy(camTarget).add(isoOffset);
+      camera.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    animate();
+
+    // --- Resize
+    window.addEventListener('resize', () => {
+      setupCamera();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // --- Click to focus (better key capture)
+    window.addEventListener('click', () => renderer.domElement.focus());
+
+    // --- Update player coordinates display
+    const coordsDisplay = document.getElementById('player-coords');
+    function updateCoords() {
+      const pos = player.position;
+      coordsDisplay.textContent = `X: ${pos.x.toFixed(2)}, Y: ${pos.y.toFixed(2)}, Z: ${pos.z.toFixed(2)}`;
+    }
+    setInterval(updateCoords, 100); // update every 100ms
+  </script>
+</body>
+</html>
