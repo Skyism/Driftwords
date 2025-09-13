@@ -204,8 +204,8 @@
   {
     "imports": {
       "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-  "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.5.11/build/index.module.js"
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.5.11/build/index.module.js"
     }
   }
   </script>
@@ -222,6 +222,7 @@
     <div><kbd>Shift</kbd> — sprint • <kbd>Q</kbd>/<kbd>E</kbd> — rotate view</div>
     <div><kbd>F</kbd> — fish (when near water)</div>
     <div><kbd>B</kbd> — my bottles</div>
+    <div><kbd>M</kbd> — mute/unmute music</div>
   </div>
 
   <div id="my-bottles-modal">
@@ -275,5 +276,14 @@
   <div id="err"></div>
 
   <div id="player-coords">X: 0, Y: 0, Z: 0</div>
+
+  <!-- === Music (HTML audio) === -->
+    <audio id="bg-music" src="assets/fishing_song.mp3" loop></audio>
+    <script>
+  document.addEventListener('click', () => {
+    const music = document.getElementById('bg-music');
+    music.play();
+  }, { once: true });
+</script>
 </body>
 </html>
