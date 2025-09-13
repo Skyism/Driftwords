@@ -761,7 +761,7 @@ window.addEventListener('keydown', (e) => {
     keys.f = true;
     e.preventDefault();
   }
-  if (e.code === 'KeyB' && !isModalOpen) {
+  if (e.code === 'KeyB' && !isModalOpen && !fishingGame.writingInterface.isActive) {
     keys.b = true;
     e.preventDefault();
   }
@@ -773,7 +773,7 @@ window.addEventListener('keyup', (e) => {
     triggerFishing();
     e.preventDefault();
   }
-  if (e.code === 'KeyB' && !isModalOpen) {
+  if (e.code === 'KeyB' && !isModalOpen && !fishingGame.writingInterface.isActive) {
     keys.b = false;
     showMyBottles();
     e.preventDefault();

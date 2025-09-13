@@ -345,6 +345,9 @@ export class FishingGame {
     this.typeUI.style.display = 'none';
     this.meditationUI.style.display = 'none';
     document.getElementById('skip-meditation').style.display = 'none';
+    
+    // Ensure writing interface is properly closed
+    this.writingInterface.hide();
   }
   
   update() {
