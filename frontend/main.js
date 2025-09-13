@@ -213,6 +213,29 @@ function fadeTo(action, duration = 0.2) {
   activeAction = action;
 }
 
+// helper: return a horizontal forward vector for the player/cat
+function getPlayerDirection() {
+  const v = new THREE.Vector3();
+  // Prefer computing forward as (local forward point in world) - (world pos) which is robust to negative scaling
+  if (catRoot) {
+    try {
+      const worldPos = new THREE.Vector3(); catRoot.getWorldPosition(worldPos);
+      const fwdPoint = catRoot.localToWorld(new THREE.Vector3(0, 0, 1));
+      v.copy(fwdPoint).sub(worldPos);
+      v.y = 0; v.normalize();
+      if (v.lengthSq() > 0) return v;
+    } catch (e) {
+      // fallback below
+    }
+  }
+  if (player && typeof player.getWorldDirection === 'function') {
+    player.getWorldDirection(v);
+    v.y = 0; v.normalize();
+    return v;
+  }
+  return v;
+}
+
 // helper + play-state flag (place near your other top-level vars)
 let walkPlaying = false;
 function anyMoveKeyDown() {
@@ -504,9 +527,37 @@ function animate() {
   if (player.position.y < FLOOR_Y) player.position.y = FLOOR_Y;
   camera.position.copy(camTarget).add(isoOffset);
   camera.lookAt(camTarget.x, camTarget.y + 1.4, camTarget.z);
-
-  // render
-  renderer.render(scene, camera);
+  // When a temp FP camera is active, update its pose to follow bone and add bob motion
+  if (window.__tempCameraActive && window.__tempCamera) {
+    const tcam = window.__tempCamera;
+    if (window.__tempCameraFollowBone && window.__tempCameraBone) {
+      const bone = window.__tempCameraBone;
+      const bonePos = new THREE.Vector3(); bone.getWorldPosition(bonePos);
+      const boneQuat = new THREE.Quaternion(); bone.getWorldQuaternion(boneQuat);
+      // apply local offset
+      const localPos = window.__tempCameraLocalPos.clone().applyQuaternion(boneQuat);
+      const targetPos = bonePos.clone().add(localPos);
+      // compose rotation from bone + local
+      const localQuat = new THREE.Quaternion().setFromEuler(window.__tempCameraLocalRot);
+      const targetQuat = boneQuat.clone().multiply(localQuat);
+      // bob effect
+      const now = performance.now() / 1000;
+      const bob = window.__tempCameraBob || { amp: 0.03, freq: 7.5 };
+      const bobOffset = Math.sin(now * bob.freq) * bob.amp * (window.__tempCameraBobMult || 1);
+      targetPos.y += bobOffset;
+      // subtle camera roll/pitch from bob
+      const bobPitch = Math.sin(now * bob.freq * 1.3) * 0.01;
+      const bobRoll = Math.cos(now * bob.freq * 1.1) * 0.007;
+      const bobQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(bobPitch, 0, bobRoll));
+      targetQuat.multiply(bobQuat);
+      // smooth lerp to target
+      tcam.position.lerp(targetPos, 0.35);
+      THREE.Quaternion.slerp(tcam.quaternion, targetQuat, tcam.quaternion, 0.35);
+    }
+    renderer.render(scene, tcam);
+  } else {
+    renderer.render(scene, camera);
+  }
   requestAnimationFrame(animate);
 }
 animate();
@@ -811,20 +862,57 @@ async function playFishingSequence() {
     rod.rotation.set(0,0,0);
   }
 
-  // compute cast direction: prefer the attached hand bone world forward, then catRoot, then player
+  
+
+  // compute cast direction: use the cat's world forward direction, fallback to player
   const dir = new THREE.Vector3();
-  if (foundBone && typeof foundBone.getWorldDirection === 'function') {
-    // use the bone's forward (world) — this aligns to the actual hand orientation
-    foundBone.getWorldDirection(dir);
-    console.log('Casting using hand bone forward:', foundBone.name, dir.x.toFixed(2), dir.y.toFixed(2), dir.z.toFixed(2));
-  } else if (catRoot && typeof catRoot.getWorldDirection === 'function') {
-    catRoot.getWorldDirection(dir);
-  } else {
-    player.getWorldDirection(dir);
+  // forward-vector debug overlay (lazy create)
+  function ensureForwardOverlay() {
+    if (document.getElementById('forward-overlay')) return document.getElementById('forward-overlay');
+    const div = document.createElement('div');
+    div.id = 'forward-overlay';
+    div.style.position = 'fixed';
+    div.style.left = '12px';
+    div.style.bottom = '12px';
+    div.style.padding = '8px 10px';
+    div.style.background = 'rgba(0,0,0,0.6)';
+    div.style.color = '#fff';
+    div.style.fontFamily = 'monospace';
+    div.style.fontSize = '12px';
+    div.style.borderRadius = '6px';
+    div.style.zIndex = 99999;
+    div.style.pointerEvents = 'none';
+    div.innerHTML = '<div><strong>Forwards</strong></div><div id="fo-hand">hand: - </div><div id="fo-cat">cat: - </div><div id="fo-player">player: - </div>';
+    document.body.appendChild(div);
+    return div;
   }
-  dir.y = 0; dir.normalize();
-  const castTarget = player.position.clone().add(dir.multiplyScalar(5.0));
+  // use catRoot forward (preferred)
+  const ov = ensureForwardOverlay();
+  if (catRoot && typeof catRoot.getWorldDirection === 'function') {
+    catRoot.getWorldDirection(dir);
+    // overlay
+    const cd = new THREE.Vector3(); catRoot.getWorldDirection(cd); ov.querySelector('#fo-cat').textContent = `cat: ${cd.x.toFixed(2)}, ${cd.y.toFixed(2)}, ${cd.z.toFixed(2)}`;
+    ov.querySelector('#fo-hand').textContent = `hand: -`;
+  } else if (player && typeof player.getWorldDirection === 'function') {
+    player.getWorldDirection(dir);
+    ov.querySelector('#fo-player').textContent = `player: ${dir.x.toFixed(2)}, ${dir.y.toFixed(2)}, ${dir.z.toFixed(2)}`;
+    ov.querySelector('#fo-hand').textContent = `hand: -`;
+  }
+  // also update player overlay for comparison
+  if (player && typeof player.getWorldDirection === 'function') { const pd = new THREE.Vector3(); player.getWorldDirection(pd); ov.querySelector('#fo-player').textContent = `player: ${pd.x.toFixed(2)}, ${pd.y.toFixed(2)}, ${pd.z.toFixed(2)}`; }
+  // auto-hide after 4s
+  clearTimeout(window.__forwardOverlayTimeout);
+  window.__forwardOverlayTimeout = setTimeout(() => { try { ov.style.display = 'none'; } catch(e){} }, 4000);
+  ov.style.display = 'block';
+  // prefer catRoot/player forward via helper
+  const pdir = getPlayerDirection();
+  const castTarget = player.position.clone().add(pdir.clone().multiplyScalar(5.0));
   castTarget.y = WATER_LEVEL - 0.05;
+  // debug: log cast direction and cat facing
+  try {
+    const catF = new THREE.Vector3(); if (catRoot) { const wp = new THREE.Vector3(); catRoot.getWorldPosition(wp); const fp = catRoot.localToWorld(new THREE.Vector3(0,0,1)); catF.copy(fp).sub(wp).setY(0).normalize(); }
+    console.debug('[fishing] cast direction (pdir)=', pdir.clone().setY(0).normalize().toArray(), ' catFacing=', catF.toArray());
+  } catch (e) { console.debug('[fishing] debug log failed', e); }
 
   const castDuration = 0.6;
   const waitDuration = 1.8;
@@ -880,6 +968,7 @@ async function playFishingSequence() {
   // reel in
   const reelTargetWorld = player.localToWorld(new THREE.Vector3(0.6, 1.05, 0.6));
   const lureWorldStart = lure.getWorldPosition(new THREE.Vector3());
+  
   await tweenWorld(lureWorldStart, reelTargetWorld, reelDuration, (pos, p) => {
     const local = rod.worldToLocal(pos.clone());
     lure.position.copy(local);
@@ -950,6 +1039,37 @@ async function playFishingSequence() {
     if (rod.parent) rod.parent.remove(rod);
     scene.remove(line);
     window.__isFishing = false;
+    // tween back camera (if temp camera active) with fade-to-black
+    if (window.__tempCameraActive && window.__tempCamera) {
+      const fadeEl = (function(){ return document.getElementById('camera-fade') || null; })();
+      // fade to black
+      if (fadeEl) fadeEl.style.opacity = '1';
+      // short delay to ensure fade covers transition
+      await new Promise(r => setTimeout(r, 160));
+  const endPos = camera.position.clone();
+  const endQuat = camera.quaternion.clone();
+      const startPos = window.__tempCamera.position.clone();
+      const startQuat = window.__tempCamera.quaternion.clone();
+      const duration = 0.45;
+      const startT = performance.now();
+      await new Promise((resolve) => {
+        (function step(now){
+          const t = Math.min(1, (now - startT) / (duration * 1000));
+          const ease = 1 - Math.pow(1 - t, 3);
+          const cur = startPos.clone().lerp(endPos, ease);
+          window.__tempCamera.position.copy(cur);
+          THREE.Quaternion.slerp(startQuat, endQuat, window.__tempCamera.quaternion, ease);
+          if (t < 1) requestAnimationFrame(step); else resolve();
+        })(performance.now());
+      });
+      // clear temp camera and fade back in
+      window.__tempCameraActive = false;
+      delete window.__tempCamera;
+      if (fadeEl) {
+        fadeEl.style.opacity = '0';
+        await new Promise(r => setTimeout(r, 260));
+      }
+    }
   }
 
 }
@@ -1096,12 +1216,33 @@ export { scene };
   window.HAND_OFFSET_POS = window.HAND_OFFSET_POS || new THREE.Vector3(0.08, -0.06, -0.02);
   window.HAND_OFFSET_ROT = window.HAND_OFFSET_ROT || new THREE.Euler(-0.35, 0.2, 0.15);
 
+  // temp camera tuning globals
+  window.__tempCameraLocalPos = window.__tempCameraLocalPos || new THREE.Vector3(0.0, 0.12, 0.06);
+  window.__tempCameraLocalRot = window.__tempCameraLocalRot || new THREE.Euler(-0.12, 0, 0);
+  window.__tempCameraBob = window.__tempCameraBob || { amp: 0.03, freq: 7.5 };
+
   addSlider('Pos X', -0.5, 0.5, 0.005, () => window.HAND_OFFSET_POS.x, (v) => window.HAND_OFFSET_POS.x = v);
   addSlider('Pos Y', -0.5, 0.5, 0.005, () => window.HAND_OFFSET_POS.y, (v) => window.HAND_OFFSET_POS.y = v);
   addSlider('Pos Z', -0.5, 0.5, 0.005, () => window.HAND_OFFSET_POS.z, (v) => window.HAND_OFFSET_POS.z = v);
   addSlider('Rot X', -Math.PI, Math.PI, 0.01, () => window.HAND_OFFSET_ROT.x, (v) => window.HAND_OFFSET_ROT.x = v);
   addSlider('Rot Y', -Math.PI, Math.PI, 0.01, () => window.HAND_OFFSET_ROT.y, (v) => window.HAND_OFFSET_ROT.y = v);
   addSlider('Rot Z', -Math.PI, Math.PI, 0.01, () => window.HAND_OFFSET_ROT.z, (v) => window.HAND_OFFSET_ROT.z = v);
+
+  // Separator
+  const sep = document.createElement('hr'); sep.style.border='none'; sep.style.height='1px'; sep.style.background='rgba(255,255,255,0.08)'; sep.style.margin='8px 0'; panel.appendChild(sep);
+  const title2 = document.createElement('div'); title2.textContent = 'FP Camera Tune'; title2.style.fontWeight='700'; title2.style.marginBottom='6px'; panel.appendChild(title2);
+
+  addSlider('Cam Pos X', -0.5, 0.5, 0.005, () => window.__tempCameraLocalPos.x, (v) => { window.__tempCameraLocalPos.x = v; });
+  addSlider('Cam Pos Y', -0.5, 0.5, 0.005, () => window.__tempCameraLocalPos.y, (v) => { window.__tempCameraLocalPos.y = v; });
+  addSlider('Cam Pos Z', -0.5, 0.5, 0.005, () => window.__tempCameraLocalPos.z, (v) => { window.__tempCameraLocalPos.z = v; });
+  addSlider('Cam Rot X', -Math.PI/2, Math.PI/2, 0.01, () => window.__tempCameraLocalRot.x, (v) => { window.__tempCameraLocalRot.x = v; });
+  addSlider('Cam Rot Y', -Math.PI, Math.PI, 0.01, () => window.__tempCameraLocalRot.y, (v) => { window.__tempCameraLocalRot.y = v; });
+  addSlider('Cam Rot Z', -Math.PI, Math.PI, 0.01, () => window.__tempCameraLocalRot.z, (v) => { window.__tempCameraLocalRot.z = v; });
+
+  const sep2 = document.createElement('div'); sep2.style.height='6px'; panel.appendChild(sep2);
+  const title3 = document.createElement('div'); title3.textContent = 'Cam Bob'; title3.style.fontWeight='700'; title3.style.marginBottom='6px'; panel.appendChild(title3);
+  addSlider('Bob Amp', 0, 0.1, 0.001, () => window.__tempCameraBob.amp, (v) => { window.__tempCameraBob.amp = v; });
+  addSlider('Bob Freq', 0, 20, 0.1, () => window.__tempCameraBob.freq, (v) => { window.__tempCameraBob.freq = v; });
 
   document.body.appendChild(panel);
 
