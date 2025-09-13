@@ -390,7 +390,10 @@ function animate() {
     move.normalize();
     const speed = baseSpeed * (keys.shift ? sprintMult : 1);
     const delta = move.multiplyScalar(speed * dt);
-    const next = player.position.clone().add(delta);
+  // remember previous horizontal position so we can snap back if move is blocked
+  const prevX = player.position.x;
+  const prevZ = player.position.z;
+  const next = player.position.clone().add(delta);
 
     // keep player near island if using circular boundary
     const len = Math.hypot(next.x, next.z);
@@ -429,9 +432,11 @@ function animate() {
       // Accept movement when there's a surface hit (including beach/water areas).
       const targetY = hit.point.y + STAND_OFFSET;
       // if the targetY would be below the floor, cancel this move
-      if (targetY < FLOOR_Y) {
-        // keep player in place, subtle blocked bob
-        body.position.y = THREE.MathUtils.damp(body.position.y, 1.4, 6, dt);
+      if (targetY <= FLOOR_Y) {
+        // blocked: snap back to previous horizontal position to avoid any drift/slide
+        player.position.x = prevX;
+        player.position.z = prevZ;
+        // keep Y unchanged
       } else {
         player.position.x = next.x;
         player.position.z = next.z;
@@ -450,8 +455,10 @@ function animate() {
       // No hit: allow movement toward beach — damp Y toward a beach fallback level so player can reach shore
       const beachY = WATER_LEVEL + STAND_OFFSET;
       // if beachY would be below the floor, cancel move
-      if (beachY < FLOOR_Y) {
-        body.position.y = THREE.MathUtils.damp(body.position.y, 1.4, 6, dt);
+      if (beachY <= FLOOR_Y) {
+        // blocked: snap back to previous horizontal position
+        player.position.x = prevX;
+        player.position.z = prevZ;
       } else {
         player.position.x = next.x;
         player.position.z = next.z;
@@ -459,7 +466,7 @@ function animate() {
         // keep facing movement direction
         const targetYaw = Math.atan2(delta.x, delta.z);
         player.rotation.y = THREE.MathUtils.damp(player.rotation.y, targetYaw, 8, dt);
-        body.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
+        player.position.y = 1.6 + Math.sin(performance.now() * 0.015) * 0.05;
       }
     }
   }
