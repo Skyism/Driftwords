@@ -199,8 +199,9 @@ function animate() {
   if (mixer) mixer.update(dt);
 
   // movement (relative to camera iso orientation)
-  const forward = new THREE.Vector3().copy(isoOffset).setY(0).normalize();
-  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0,1,0)).negate();
+  // forward should point from camera toward the scene center (negated isoOffset)
+  const forward = new THREE.Vector3().copy(isoOffset).setY(0).normalize().negate();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0,1,0)).normalize();
 
   let move = new THREE.Vector3();
   const pressUp    = keys.w || keys.up;
